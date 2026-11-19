@@ -1867,9 +1867,9 @@ public enum TelegramBuiltinTheme : String {
     public var palette: ColorPalette {
         switch self {
         case .day:
-            return whitePalette
-        case .dark:
             return veilPalette
+        case .dark:
+            return veilDarkPalette
         case .dayClassic:
             return dayClassicPalette
         case .system:

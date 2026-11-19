@@ -75,6 +75,8 @@ public extension TelegramTheme {
 
 
 
+public let veilWallpaper: Wallpaper = .gradient(nil, [0x9DBDF0, 0xE4EDFA, 0xB9CDF6, 0xF1F5FC], nil)
+
 public enum Wallpaper : Equatable, Codable {
     case builtin
     case color(UInt32)
@@ -1200,9 +1202,9 @@ public struct ThemePaletteSettings: Codable, Equatable {
     }
     
     public static var defaultTheme: ThemePaletteSettings {
-        let defDark = DefaultTheme(local: .dark, cloud: nil)
-        let defDay = DefaultTheme(local: .dark, cloud: nil)
-        return ThemePaletteSettings(palette: veilPalette, bubbled: true, fontSize: 13, wallpaper: ThemeWallpaper(wallpaper: .color(0x1A1A1C), associated: nil), defaultDark: defDark, defaultDay: defDay, defaultIsDark: true, wallpapers: [LocalWallapper(name: .dayClassic, accentColor: dayClassicPalette.accent.argb, wallpaper: AssociatedWallpaper(cloud: nil, wallpaper: .builtin), associated: nil, cloud: nil)], accents: [], cloudTheme: nil, associated: [], legacyMenu: false)
+        let defDark = DefaultTheme(local: .day, cloud: nil)
+        let defDay = DefaultTheme(local: .day, cloud: nil)
+        return ThemePaletteSettings(palette: veilPalette, bubbled: true, fontSize: 13, wallpaper: ThemeWallpaper(wallpaper: veilWallpaper, associated: nil), defaultDark: defDark, defaultDay: defDay, defaultIsDark: false, wallpapers: [LocalWallapper(name: .dayClassic, accentColor: dayClassicPalette.accent.argb, wallpaper: AssociatedWallpaper(cloud: nil, wallpaper: .builtin), associated: nil, cloud: nil)], accents: [], cloudTheme: nil, associated: [], legacyMenu: false)
     }
 }
 

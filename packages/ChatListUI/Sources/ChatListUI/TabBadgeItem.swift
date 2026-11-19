@@ -150,7 +150,7 @@ final class TabAnimatedIconView : LottiePlayerView {
     }
 
     private var colors: [LottieColor] {
-        return [.init(keyPath: "", color: selected ? theme.colors.accentIcon : theme.colors.text)]
+        return [.init(keyPath: "", color: selected ? NSColor(srgbRed: 0.45, green: 0.6, blue: 1.0, alpha: 1.0) : NSColor(white: 0.82, alpha: 1.0))]
     }
 
     func setSelected(_ selected: Bool, animated: Bool) {

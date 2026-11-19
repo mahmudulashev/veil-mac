@@ -411,9 +411,9 @@ private final class SelectorView : View {
     
     override func draw(_ layer: CALayer, in ctx: CGContext) {
         super.draw(layer, in: ctx)
-        ctx.round(frame.size, 2.0)
+        ctx.round(frame.size, frame.height / 2)
         if let theme = self.theme {
-            ctx.setFillColor(theme.selector.cgColor)
+            ctx.setFillColor(theme.selector.withAlphaComponent(0.14).cgColor)
             ctx.fill(bounds)
         }
     }
@@ -555,7 +555,8 @@ public class ScrollableSegmentView: View {
             width = view.size.width - selectedItem.insets.left - selectedItem.insets.right
         }
         
-        return CGRect(origin: NSMakePoint(x, frame.height - 6 / 2), size: CGSize(width: width, height: 6))
+        let pillHeight: CGFloat = min(28, frame.height - 4)
+        return CGRect(origin: NSMakePoint(x - 10, floor((frame.height - pillHeight) / 2)), size: CGSize(width: width + 20, height: pillHeight))
     }
 
     

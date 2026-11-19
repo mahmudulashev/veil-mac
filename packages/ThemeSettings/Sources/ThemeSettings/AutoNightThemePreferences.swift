@@ -28,7 +28,7 @@ public struct AutoNightThemePreferences: Codable, Equatable {
     
     public init() {
         self.schedule = nil
-        self.theme = DefaultTheme(local: .dark, cloud: nil)
+        self.theme = DefaultTheme(local: .day, cloud: nil)
         self.systemBased = false
     }
     

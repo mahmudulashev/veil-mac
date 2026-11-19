@@ -10,8 +10,8 @@ public enum MessageBubbleImageNeighbors: Hashable {
     case extracted
 }
 
-let messageBubbleMainRadius: CGFloat = 16.0
-let messageBubbleAuxiliaryRadius: CGFloat = 8.0
+let messageBubbleMainRadius: CGFloat = 18.0
+let messageBubbleAuxiliaryRadius: CGFloat = 6.0
 let messageBubbleTailWidth: CGFloat = 6.0
 let messageBubbleDiameter: CGFloat = 32.0
 

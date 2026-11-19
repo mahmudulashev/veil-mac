@@ -122,7 +122,7 @@ public class TabBarView: View {
     }
     var didReorderTabs: () -> Void = {}
 
-    private let glass = LiquidGlassView(frame: .zero, cornerRadius: FloatingTabBarLayout.height / 2, tintAlpha: 0.15)
+    private let glass = LiquidGlassView(frame: .zero, cornerRadius: FloatingTabBarLayout.height / 2, tintAlpha: 0.15, customTint: NSColor(srgbRed: 14.0 / 255.0, green: 20.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.9))
     private let selectionView = View()
     private let liftedGlass = LiquidGlassView(frame: .zero, cornerRadius: 28, hasShadow: true, hasBorder: true, tintAlpha: 0.1)
     private var gesture: SelectionGesture?
@@ -360,7 +360,7 @@ public class TabBarView: View {
     public override func updateLocalizationAndTheme(theme: PresentationTheme) {
         super.updateLocalizationAndTheme(theme: theme)
         backgroundColor = .clear
-        selectionView.backgroundColor = theme.colors.text.withAlphaComponent(theme.colors.isDark ? 0.12 : 0.08)
+        selectionView.backgroundColor = NSColor.white.withAlphaComponent(0.14)
         for (tab, control) in zip(tabs, itemControls) {
             updateMetadata(for: control, tab: tab)
             if nativeLens != nil {
@@ -756,7 +756,7 @@ public class TabBarView: View {
                 }
             }
             nativeLens.frame = bounds
-            let unlensedIconColor = presentation.colors.text
+            let unlensedIconColor = NSColor(white: 0.82, alpha: 1.0)
             let sources: [LiquidGlassLensContentSource] = reorderGesture != nil || pickup != nil ? [] : itemControls.enumerated().flatMap { index, control -> [LiquidGlassLensContentSource] in
                 guard control.layer?.animation(forKey: "position") == nil else {
                     return []
@@ -766,7 +766,7 @@ public class TabBarView: View {
                         return []
                     }
                     if childIndex == 0 {
-                        return tabs[index].lensContentSources(for: view, lensedTintColor: presentation.colors.accentIcon, unlensedTintColor: unlensedIconColor)
+                        return tabs[index].lensContentSources(for: view, lensedTintColor: NSColor(srgbRed: 0.45, green: 0.6, blue: 1.0, alpha: 1.0), unlensedTintColor: unlensedIconColor)
                     }
                     return [LiquidGlassLensContentSource(view: view)]
                 }

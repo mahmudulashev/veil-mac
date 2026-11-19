@@ -1787,15 +1787,15 @@ public func generateIcons(from palette: ColorPalette, bubbled: Bool) -> Telegram
                                                chat_filter_new_chats: { TelegramThemeHooks.shared.image(.iconFilterNewChats).precomposed(.white) },
                                                chat_filter_existing_chats: { TelegramThemeHooks.shared.image(.iconFilterExistingChats).precomposed(.white) },
                                                group_invite_via_link: { TelegramThemeHooks.shared.image(.iconInviteViaLink).precomposed(palette.accentIcon) },
-                                               tab_contacts: { TelegramThemeHooks.shared.image(.iconTabContacts).precomposed(palette.grayIcon) },
-                                               tab_contacts_active: { TelegramThemeHooks.shared.image(.iconTabContacts).precomposed(palette.accentIcon) },
-                                               tab_calls: { TelegramThemeHooks.shared.image(.iconTabRecentCalls).precomposed(palette.grayIcon) },
-                                               tab_calls_active: { TelegramThemeHooks.shared.image(.iconTabRecentCalls).precomposed(palette.accentIcon) },
-                                               tab_chats: { TelegramThemeHooks.shared.image(.iconTabChatList).precomposed(palette.grayIcon) },
-                                               tab_chats_active: { TelegramThemeHooks.shared.image(.iconTabChatList).precomposed(palette.accentIcon) },
-                                               tab_chats_active_filters: { generateChatTabFiltersIcon(TelegramThemeHooks.shared.image(.iconTabChatList).precomposed(palette.accentIcon)) },
-                                               tab_settings: { TelegramThemeHooks.shared.image(.iconTabSettings).precomposed(palette.grayIcon) },
-                                               tab_settings_active: { TelegramThemeHooks.shared.image(.iconTabSettings).precomposed(palette.accentIcon) },
+                                               tab_contacts: { TelegramThemeHooks.shared.image(.iconTabContacts).precomposed(NSColor(white: 0.82, alpha: 1.0)) },
+                                               tab_contacts_active: { TelegramThemeHooks.shared.image(.iconTabContacts).precomposed(NSColor(srgbRed: 0.45, green: 0.6, blue: 1.0, alpha: 1.0)) },
+                                               tab_calls: { TelegramThemeHooks.shared.image(.iconTabRecentCalls).precomposed(NSColor(white: 0.82, alpha: 1.0)) },
+                                               tab_calls_active: { TelegramThemeHooks.shared.image(.iconTabRecentCalls).precomposed(NSColor(srgbRed: 0.45, green: 0.6, blue: 1.0, alpha: 1.0)) },
+                                               tab_chats: { TelegramThemeHooks.shared.image(.iconTabChatList).precomposed(NSColor(white: 0.82, alpha: 1.0)) },
+                                               tab_chats_active: { TelegramThemeHooks.shared.image(.iconTabChatList).precomposed(NSColor(srgbRed: 0.45, green: 0.6, blue: 1.0, alpha: 1.0)) },
+                                               tab_chats_active_filters: { generateChatTabFiltersIcon(TelegramThemeHooks.shared.image(.iconTabChatList).precomposed(NSColor(srgbRed: 0.45, green: 0.6, blue: 1.0, alpha: 1.0))) },
+                                               tab_settings: { TelegramThemeHooks.shared.image(.iconTabSettings).precomposed(NSColor(white: 0.82, alpha: 1.0)) },
+                                               tab_settings_active: { TelegramThemeHooks.shared.image(.iconTabSettings).precomposed(NSColor(srgbRed: 0.45, green: 0.6, blue: 1.0, alpha: 1.0)) },
                                                profile_add_member: { generateProfileIcon(TelegramThemeHooks.shared.image(.iconProfileAddMember).precomposed(palette.accentIcon), backgroundColor: palette.accent) },
                                                profile_call: { generateProfileIcon(TelegramThemeHooks.shared.image(.iconProfileCallNew).precomposed(palette.accentIcon), backgroundColor: palette.accent) },
                                                profile_video_call: { generateProfileIcon(TelegramThemeHooks.shared.image(.iconProfileVideoCall).precomposed(palette.accentIcon), backgroundColor: palette.accent) },
@@ -2275,7 +2275,7 @@ public func telegramUpdateTheme(_ theme: TelegramPresentationTheme, window: Wind
 }
 
 public func setDefaultTheme(for window: Window? = nil) {
-    telegramUpdateTheme(generateTheme(palette: veilPalette, cloudTheme: nil, bubbled: true, fontSize: 13.0, wallpaper: ThemeWallpaper(wallpaper: .color(0x1A1A1C), associated: nil)), window: window, animated: false)
+    telegramUpdateTheme(generateTheme(palette: veilPalette, cloudTheme: nil, bubbled: true, fontSize: 13.0, wallpaper: ThemeWallpaper(wallpaper: veilWallpaper, associated: nil)), window: window, animated: false)
 }
 
 

@@ -645,7 +645,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             armCrashMarker(folder: rootPath)
             
             
-            let veilThemeResetKey = "veil.theme.reset.v3"
+            let veilThemeResetKey = "veil.theme.reset.v4"
             let veilThemeReset: Signal<Void, NoError>
             if UserDefaults.standard.bool(forKey: veilThemeResetKey) {
                 veilThemeReset = .single(Void())

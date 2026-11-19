@@ -703,12 +703,24 @@ func makeChatListSelectionPlateLayer() -> SimpleLayer {
     let layer = SimpleLayer()
     layer.anchorPoint = .zero
     layer.zPosition = -1
-    layer.cornerRadius = 14
+    layer.cornerRadius = 18
     if #available(macOS 10.15, *) {
         layer.cornerCurve = .continuous
     }
     layer.masksToBounds = true
     layer.isHidden = true
+    return layer
+}
+
+func makeChatListCardLayer() -> SimpleLayer {
+    let layer = SimpleLayer()
+    layer.anchorPoint = .zero
+    layer.zPosition = -2
+    layer.cornerRadius = 18
+    if #available(macOS 10.15, *) {
+        layer.cornerCurve = .continuous
+    }
+    layer.masksToBounds = true
     return layer
 }
 
@@ -1243,6 +1255,7 @@ public class ChatListRowView: TableRowView {
     private let contentView: View = View()
     private let contentDrawer = ChatListRowContentDrawer()
     private let selectionBackgroundLayer: SimpleLayer = makeChatListSelectionPlateLayer()
+    private let cardBackgroundLayer: SimpleLayer = makeChatListCardLayer()
     private var expandView: ChatListExpandView?
     
     private var statusControl: PremiumStatusControl?
@@ -1423,6 +1436,14 @@ public class ChatListRowView: TableRowView {
         return .clear
     }
 
+    private func cardBackgroundColor() -> NSColor {
+        guard let item = item as? ChatListRowItem else { return .clear }
+        if item.isCollapsed || item.shouldHideContent || item.isAutohidden { return .clear }
+        if case .savedMessageIndex = item.entryId { return .clear }
+        if item.context.layout == .single { return .clear }
+        return theme.colors.isDark ? theme.colors.grayBackground : NSColor.white.withAlphaComponent(0.92)
+    }
+
     private func selectionBackgroundColor() -> NSColor {
         guard let item = item as? ChatListRowItem else { return .clear }
         if item.isCollapsed { return .clear }
@@ -1485,7 +1506,7 @@ public class ChatListRowView: TableRowView {
              let suppressForResort = self.isResorting
              let suppressForDrag = containerView.activeDragging
              let suppressForReveal = isRevealSurfaceVisible || (nextRowView?.isRevealSurfaceVisible ?? false)
-             if !suppressForSelection, !suppressForHighlight, !suppressForResort, !suppressForDrag, !suppressForReveal, !item.isAutohidden, !nextSelected, !nextHighlighted, !nextResorting, !nextDragging {
+             if false, !suppressForSelection, !suppressForHighlight, !suppressForResort, !suppressForDrag, !suppressForReveal, !item.isAutohidden, !nextSelected, !nextHighlighted, !nextResorting, !nextDragging {
 
                 ctx.setFillColor(theme.colors.border.cgColor)
                 ctx.fill(NSMakeRect(item.isLastPinned ? 0 : item.leftInset, contentView.bounds.height - .borderSize, item.isLastPinned ? contentView.frame.width : contentView.bounds.width - item.leftInset, .borderSize))
@@ -1570,6 +1591,7 @@ public class ChatListRowView: TableRowView {
         
         super.init(frame: frameRect)
         
+        containerView.layer?.addSublayer(cardBackgroundLayer)
         containerView.layer?.addSublayer(selectionBackgroundLayer)
         containerView.addSubview(contentView)
         self.layerContentsRedrawPolicy = .onSetNeedsDisplay
@@ -1663,6 +1685,7 @@ public class ChatListRowView: TableRowView {
         let selectionColor = selectionBackgroundColor()
         let shouldShow = selectionColor.alphaComponent != 0
         selectionBackgroundLayer.backgroundColor = selectionColor.cgColor
+        cardBackgroundLayer.backgroundColor = cardBackgroundColor().cgColor
 
         if shouldShow != selectionVisible {
             selectionVisible = shouldShow
@@ -2974,21 +2997,23 @@ public class ChatListRowView: TableRowView {
         expandView?.frame = NSMakeRect(0, item.isCollapsed ? 0 : item.height, frame.width - .borderSize, frame.height)
         
         
-        containerView.frame = NSMakeRect(reveal.revealOffset, item.isCollapsed ? -item.height : 0, frame.width - .borderSize, item.height)
+        let cardInset: CGFloat = item.context.layout == .single || item.shouldHideContent ? 0 : 8
+        containerView.frame = NSMakeRect(reveal.revealOffset + cardInset, item.isCollapsed ? -item.height : 0, frame.width - .borderSize - cardInset * 2, item.height)
 
         let selectionFrame: NSRect
         if item.shouldHideContent {
             selectionFrame = photo.frame.insetBy(dx: -7, dy: -7)
         } else {
-            selectionFrame = containerView.bounds.insetBy(dx: 3, dy: 3)
+            selectionFrame = containerView.bounds.insetBy(dx: 0, dy: 3)
         }
+        cardBackgroundLayer.frame = item.shouldHideContent ? .zero : containerView.bounds.insetBy(dx: 0, dy: 3)
         if animateSelectionChange, !selectionBackgroundLayer.isHidden, selectionBackgroundLayer.frame != selectionFrame {
             chatListAnimateLayerFrame(selectionBackgroundLayer, to: selectionFrame)
         } else {
             selectionBackgroundLayer.frame = selectionFrame
         }
 
-        contentView.frame = CGRect(origin: contentPoint(item), size: frame.size)
+        contentView.frame = CGRect(origin: contentPoint(item), size: containerView.frame.size)
         if item.sidebarSelection != nil {
             photo.isHidden = true
             animatedView?.isHidden = true
