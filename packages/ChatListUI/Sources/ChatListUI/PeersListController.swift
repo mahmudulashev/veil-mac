@@ -1074,11 +1074,7 @@ public class PeerListContainerView : Control {
     private var compose:ImageButton?
     private var ghostButton: ImageButton?
     private var ghostListener: Int?
-    private var ghostCard: VeilGhostCardView?
-
-    private var ghostCardInset: CGFloat {
-        return ghostCard != nil ? VeilGhostCardView.height + 8 : 0
-    }
+    private var ghostPill: VeilGhostPillView?
     private var backButton: ImageButton?
     private var glassContainer: NSView?
 
@@ -1308,14 +1304,14 @@ public class PeerListContainerView : Control {
         let hasGhost = state.splitState != .minimisize && state.mode == .plain && !state.isContacts && self.backButton == nil
 
         if hasGhost {
-            if self.ghostCard == nil {
-                let card = VeilGhostCardView(frame: NSMakeRect(10, statusHeight, frame.width - 20, VeilGhostCardView.height))
-                self.ghostCard = card
-                containerView.addSubview(card)
+            if self.ghostPill == nil {
+                let pill = VeilGhostPillView(frame: NSMakeRect(14, floor((statusHeight - VeilGhostPillView.height) / 2), 76, VeilGhostPillView.height))
+                self.ghostPill = pill
+                containerView.addSubview(pill)
             }
-        } else if let card = self.ghostCard {
-            performSubviewRemoval(card, animated: animated)
-            self.ghostCard = nil
+        } else if let pill = self.ghostPill {
+            performSubviewRemoval(pill, animated: animated)
+            self.ghostPill = nil
         }
 
         if false {
@@ -1671,7 +1667,6 @@ public class PeerListContainerView : Control {
         if let storiesItem = self.storiesItem {
             searchY += (StoryListChatListRowItem.InterfaceState.revealed.height * storiesItem.progress) + 9 * storiesItem.progress
         }
-        searchY += ghostCardInset
 
         if inlineBackButton {
             let buttonSize: CGFloat = 30
@@ -1740,10 +1735,9 @@ public class PeerListContainerView : Control {
             searchY += (StoryListChatListRowItem.InterfaceState.revealed.height * storiesItem.progress) + 9 * storiesItem.progress
         }
 
-        if let card = ghostCard {
-            transition.updateFrame(view: card, frame: NSMakeRect(10, searchY + 2, size.width - 20, VeilGhostCardView.height))
-            transition.updateAlpha(view: card, alpha: progress)
-            searchY += ghostCardInset
+        if let pill = ghostPill {
+            transition.updateFrame(view: pill, frame: NSMakeRect(14, floorToScreenPixels(backingScaleFactor, (statusHeight - VeilGhostPillView.height) / 2), pill.preferredWidth, VeilGhostPillView.height))
+            transition.updateAlpha(view: pill, alpha: progress)
         }
 
 
@@ -1914,7 +1908,6 @@ public class PeerListContainerView : Control {
         if state.splitState != .minimisize, state.mode.isPlain || state.mode.isCommunity {
 
             offset += 40
-            offset += ghostCardInset
 
             if let storiesItem = self.storiesItem {
                 offset += storiesItem.navigationHeight
