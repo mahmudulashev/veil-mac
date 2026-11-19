@@ -8,13 +8,13 @@ import TelegramTheme
 import Localization
 
 public final class SearchTabsView: Control {
-    fileprivate let tagsView = ScrollableSegmentView(frame: NSMakeRect(0, -10, 0, 40))
+    fileprivate let tagsView = ScrollableSegmentView(frame: NSMakeRect(0, -4, 0, 40))
     fileprivate var sectionView: NSView?
 
     public required init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         backgroundColor = .clear
-        tagsView.frame = NSMakeRect(0, -10, frameRect.width, 40)
+        tagsView.frame = NSMakeRect(0, -4, frameRect.width, 40)
         addSubview(tagsView)
     }
 
@@ -35,7 +35,7 @@ public final class SearchTabsView: Control {
 
     public override func layout() {
         super.layout()
-        tagsView.frame = NSMakeRect(0, -10, frame.width, 40)
+        tagsView.frame = NSMakeRect(0, -4, frame.width, 40)
         sectionView?.frame = NSMakeRect(0, tagsView.frame.maxY, frame.width, max(0, frame.height - tagsView.frame.maxY))
     }
 }
