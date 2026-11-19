@@ -1,0 +1,2600 @@
+diff --git a/submodules/MetalEngine/Package.swift b/submodules/MetalEngine/Package.swift
+index 85b28b7b..ec383885 100644
+--- a/submodules/MetalEngine/Package.swift
++++ b/submodules/MetalEngine/Package.swift
+@@ -25,7 +25,6 @@ let package = Package(
+             name: "MetalEngine",
+             dependencies: [.product(name: "ShelfPack", package: "ShelfPack", condition: nil),
+                            .product(name: "TGUIKit", package: "TGUIKit", condition: nil)],
+-            path: "Sources/",
+-            resources: [.copy("MetalEngineShaders.metal")]),
++            path: "Sources/"),
+     ]
+ )
+diff --git a/submodules/Postbox/Sources/MediaBox.swift b/submodules/Postbox/Sources/MediaBox.swift
+index e28a2d0f..ceb7c2a8 100644
+--- a/submodules/Postbox/Sources/MediaBox.swift
++++ b/submodules/Postbox/Sources/MediaBox.swift
+@@ -556,13 +556,16 @@ public final class MediaBox {
+                     self.dataQueue.async {
+                         if let (fileContext, releaseContext) = self.fileContext(for: id) {
+                             let waitUntilAfterInitialFetch: Bool
++                            let incremental: Bool
+                             switch option {
+                                 case let .complete(waitUntilFetchStatus):
+                                     waitUntilAfterInitialFetch = waitUntilFetchStatus
++                                    incremental = false
+                                 case let .incremental(waitUntilFetchStatus):
+                                     waitUntilAfterInitialFetch = waitUntilFetchStatus
++                                    incremental = true
+                             }
+-                            let dataDisposable = fileContext.data(range: 0 ..< Int64.max, waitUntilAfterInitialFetch: waitUntilAfterInitialFetch, next: { value in
++                            let dataDisposable = fileContext.data(range: 0 ..< Int64.max, incremental: incremental, waitUntilAfterInitialFetch: waitUntilAfterInitialFetch, next: { value in
+                                 self.dataQueue.async {
+                                     if value.complete {
+                                         if let pathExtension = pathExtension {
+@@ -778,7 +781,7 @@ public final class MediaBox {
+                     return
+                 }
+                 
+-                let dataDisposable = fileContext.data(range: range, waitUntilAfterInitialFetch: false, next: { result in
++                let dataDisposable = fileContext.data(range: range, incremental: false, waitUntilAfterInitialFetch: false, next: { result in
+                     if let file = ManagedFile(queue: self.dataQueue, path: result.path, mode: .read), let fileSize = file.getSize() {
+                         if result.complete {
+                             let clippedLowerBound = min(result.offset, fileSize)
+diff --git a/submodules/Postbox/Sources/MediaBoxFileContext.swift b/submodules/Postbox/Sources/MediaBoxFileContext.swift
+index 619a252b..d3297567 100644
+--- a/submodules/Postbox/Sources/MediaBoxFileContext.swift
++++ b/submodules/Postbox/Sources/MediaBoxFileContext.swift
+@@ -8,7 +8,7 @@ protocol MediaBoxFileContext: AnyObject {
+     func addReference() -> Int
+     func removeReference(_ index: Int)
+     
+-    func data(range: Range<Int64>, waitUntilAfterInitialFetch: Bool, next: @escaping (MediaResourceData) -> Void) -> Disposable
++    func data(range: Range<Int64>, incremental: Bool, waitUntilAfterInitialFetch: Bool, next: @escaping (MediaResourceData) -> Void) -> Disposable
+     
+     func fetched(range: Range<Int64>, priority: MediaBoxFetchPriority, fetch: @escaping (Signal<[(Range<Int64>, MediaBoxFetchPriority)], NoError>) -> Signal<MediaResourceDataFetchResult, MediaResourceDataFetchError>, error: @escaping (MediaResourceDataFetchError) -> Void, completed: @escaping () -> Void) -> Disposable
+     func fetchedFullRange(fetch: @escaping (Signal<[(Range<Int64>, MediaBoxFetchPriority)], NoError>) -> Signal<MediaResourceDataFetchResult, MediaResourceDataFetchError>, error: @escaping (MediaResourceDataFetchError) -> Void, completed: @escaping () -> Void) -> Disposable
+diff --git a/submodules/Postbox/Sources/MediaBoxFileContextV2Impl.swift b/submodules/Postbox/Sources/MediaBoxFileContextV2Impl.swift
+index 02142474..49ffeda5 100644
+--- a/submodules/Postbox/Sources/MediaBoxFileContextV2Impl.swift
++++ b/submodules/Postbox/Sources/MediaBoxFileContextV2Impl.swift
+@@ -41,6 +41,7 @@ public final class MediaBoxFileContextV2Impl: MediaBoxFileContext {
+     
+     private final class PartialDataRequest {
+         let range: Range<Int64>
++        let incremental: Bool
+         let next: (MediaResourceData) -> Void
+         
+         var waitingUntilAfterInitialFetch: Bool
+@@ -48,10 +49,12 @@ public final class MediaBoxFileContextV2Impl: MediaBoxFileContext {
+         
+         init(
+             range: Range<Int64>,
++            incremental: Bool,
+             waitUntilAfterInitialFetch: Bool,
+             next: @escaping (MediaResourceData) -> Void
+         ) {
+             self.range = range
++            self.incremental = incremental
+             self.waitingUntilAfterInitialFetch = waitUntilAfterInitialFetch
+             self.next = next
+         }
+@@ -251,9 +254,10 @@ public final class MediaBoxFileContextV2Impl: MediaBoxFileContext {
+             }
+         }
+         
+-        func partialData(range: Range<Int64>, waitUntilAfterInitialFetch: Bool, next: @escaping (MediaResourceData) -> Void) -> Disposable {
++        func partialData(range: Range<Int64>, incremental: Bool, waitUntilAfterInitialFetch: Bool, next: @escaping (MediaResourceData) -> Void) -> Disposable {
+             let request = PartialDataRequest(
+                 range: range,
++                incremental: incremental,
+                 waitUntilAfterInitialFetch: waitUntilAfterInitialFetch && !self.hasPerformedAnyFetch,
+                 next: next
+             )
+@@ -656,7 +660,11 @@ public final class MediaBoxFileContextV2Impl: MediaBoxFileContext {
+                 }
+                 return true
+             } else {
+-                let updatedStatus = MediaResourceData(path: self.partialPath, offset: request.range.lowerBound, size: 0, complete: false)
++                var size: Int64 = 0
++                if request.incremental, let availableRange = self.fileMap.ranges.ranges.first(where: { $0.contains(request.range.lowerBound) }) {
++                    size = min(request.range.upperBound, availableRange.upperBound) - request.range.lowerBound
++                }
++                let updatedStatus = MediaResourceData(path: self.partialPath, offset: request.range.lowerBound, size: size, complete: false)
+                 if request.reportedStatus != updatedStatus {
+                     if request.waitingUntilAfterInitialFetch {
+                         if self.hasPerformedAnyFetch {
+@@ -792,7 +800,7 @@ public final class MediaBoxFileContextV2Impl: MediaBoxFileContext {
+         }
+     }
+     
+-    public func data(range: Range<Int64>, waitUntilAfterInitialFetch: Bool, next: @escaping (MediaResourceData) -> Void) -> Disposable {
++    public func data(range: Range<Int64>, incremental: Bool = false, waitUntilAfterInitialFetch: Bool, next: @escaping (MediaResourceData) -> Void) -> Disposable {
+         assert(self.queue.isCurrent())
+         
+         if let size = fileSize(self.path) {
+@@ -810,6 +818,7 @@ public final class MediaBoxFileContextV2Impl: MediaBoxFileContext {
+             return self.withPartialState { partialState in
+                 return partialState.partialData(
+                     range: range,
++                    incremental: incremental,
+                     waitUntilAfterInitialFetch: waitUntilAfterInitialFetch,
+                     next: next
+                 )
+diff --git a/submodules/Postbox/Tests/MediaBoxIncrementalDataTests.swift b/submodules/Postbox/Tests/MediaBoxIncrementalDataTests.swift
+new file mode 100644
+index 00000000..d742a1b0
+--- /dev/null
++++ b/submodules/Postbox/Tests/MediaBoxIncrementalDataTests.swift
+@@ -0,0 +1,160 @@
++import Foundation
++import XCTest
++import SwiftSignalKit
++@testable import Postbox
++
++final class MediaBoxIncrementalDataTests: XCTestCase {
++    private var queue: Queue!
++    private var basePath: String!
++    private var manager: MediaBoxFileManager!
++    private var context: MediaBoxFileContextV2Impl!
++    private var fetch: Disposable!
++    private var pipe: ValuePipe<MediaResourceDataFetchResult>!
++    private var subscriptions: [Disposable] = []
++
++    override func setUp() {
++        super.setUp()
++        self.queue = Queue(name: "MediaBoxIncrementalDataTests")
++        self.basePath = NSTemporaryDirectory() + "MediaBoxIncrementalDataTests-" + UUID().uuidString
++        try! FileManager.default.createDirectory(atPath: self.basePath, withIntermediateDirectories: true)
++        self.manager = MediaBoxFileManager(queue: self.queue)
++        self.pipe = ValuePipe()
++        self.queue.sync {
++            self.context = MediaBoxFileContextV2Impl(queue: self.queue, manager: self.manager, storageBox: nil, resourceId: Data("resource".utf8), path: self.basePath + "/resource", partialPath: self.basePath + "/resource_partial", metaPath: self.basePath + "/resource_partial.meta")
++        }
++    }
++
++    override func tearDown() {
++        self.subscriptions.forEach { $0.dispose() }
++        self.fetch?.dispose()
++        self.queue.sync { self.context = nil }
++        self.manager = nil
++        try? FileManager.default.removeItem(atPath: self.basePath)
++        super.tearDown()
++    }
++
++    private func beginFetch() {
++        self.queue.sync {
++            self.fetch = self.context.fetchedFullRange(fetch: { _ in
++                self.pipe.signal() |> castError(MediaResourceDataFetchError.self)
++            }, error: { _ in XCTFail("unexpected fetch error") }, completed: {})
++        }
++    }
++
++    @discardableResult
++    private func observe(range: Range<Int64> = 0 ..< Int64.max, incremental: Bool = true, wait: Bool = false, next: @escaping (MediaResourceData) -> Void) -> Disposable {
++        var subscription: Disposable!
++        self.queue.sync {
++            subscription = self.context.data(range: range, incremental: incremental, waitUntilAfterInitialFetch: wait, next: next)
++        }
++        self.subscriptions.append(subscription)
++        return subscription
++    }
++
++    private func emit(_ result: MediaResourceDataFetchResult) {
++        self.pipe.putNext(result)
++        self.queue.sync {}
++    }
++
++    private func write(_ offset: Int64, _ values: [UInt8], complete: Bool = false) {
++        self.emit(.dataPart(resourceOffset: offset, data: Data(values), range: 0 ..< Int64(values.count), complete: complete))
++    }
++
++    func testIncompletePrefixGrowsButCompleteModeWaits() {
++        var incremental: [MediaResourceData] = []
++        var complete: [MediaResourceData] = []
++        self.observe { incremental.append($0) }
++        self.observe(incremental: false) { complete.append($0) }
++        self.beginFetch()
++        self.write(0, [1, 2, 3, 4])
++        self.write(4, [5, 6])
++        self.queue.sync {
++            XCTAssertEqual(incremental.map(\.size), [0, 4, 6])
++            XCTAssertTrue(incremental.allSatisfy { !$0.complete })
++            XCTAssertEqual(complete.map(\.size), [0])
++        }
++    }
++
++    func testOutOfOrderWritesExposeOnlyContiguousPrefixAndFillingHoleAdvancesIt() {
++        var values: [MediaResourceData] = []
++        self.observe { values.append($0) }
++        self.beginFetch()
++        self.write(8, [9, 10, 11, 12])
++        self.queue.sync { XCTAssertEqual(values.map(\.size), [0]) }
++        self.write(0, [1, 2, 3, 4])
++        self.queue.sync { XCTAssertEqual(values.map(\.size), [0, 4]) }
++        self.write(4, [5, 6, 7, 8])
++        self.queue.sync {
++            XCTAssertEqual(values.map(\.size), [0, 4, 12])
++            XCTAssertEqual(try? Data(contentsOf: URL(fileURLWithPath: values.last!.path)), Data(1 ... 12))
++        }
++    }
++
++    func testFiniteRangeKeepsCompleteRangeSemantics() {
++        var values: [MediaResourceData] = []
++        self.observe(range: 4 ..< 12, incremental: false) { values.append($0) }
++        self.beginFetch()
++        self.write(4, [5, 6, 7, 8])
++        self.queue.sync { XCTAssertEqual(values.map(\.size), [0]) }
++        self.write(8, [9, 10, 11, 12])
++        self.queue.sync {
++            XCTAssertEqual(values.map(\.size), [0, 8])
++            XCTAssertEqual(values.last?.offset, 4)
++            XCTAssertEqual(values.last?.complete, true)
++        }
++    }
++
++    func testHeaderReplacementRetainsPrefixAndCompletionPublishesFinalBytes() {
++        var values: [MediaResourceData] = []
++        self.observe { values.append($0) }
++        self.beginFetch()
++        self.write(0, [1, 2, 3, 4, 5, 6, 7, 8])
++        self.emit(.replaceHeader(data: Data([9, 10]), range: 0 ..< 2))
++        self.queue.sync { XCTAssertEqual(values.map(\.size), [0, 8]) }
++        self.emit(.resourceSizeUpdated(8))
++        self.queue.sync {
++            XCTAssertEqual(values.map(\.size), [0, 8, 8])
++            XCTAssertEqual(values.last?.complete, true)
++            XCTAssertEqual(try? Data(contentsOf: URL(fileURLWithPath: values.last!.path)), Data([9, 10, 3, 4, 5, 6, 7, 8]))
++        }
++    }
++
++    func testFinalDataPartCompletesIncrementalAndCompleteSubscribers() {
++        var incremental: [MediaResourceData] = []
++        var complete: [MediaResourceData] = []
++        self.observe { incremental.append($0) }
++        self.observe(incremental: false) { complete.append($0) }
++        self.beginFetch()
++        self.write(0, [1, 2])
++        self.write(2, [3, 4], complete: true)
++        self.queue.sync {
++            XCTAssertEqual(incremental.last?.size, 4)
++            XCTAssertEqual(incremental.last?.complete, true)
++            XCTAssertEqual(complete.map(\.size), [0, 4])
++            XCTAssertEqual(complete.last?.complete, true)
++        }
++    }
++
++    func testCancelledObserverReceivesNoLaterPrefixOrCompletion() {
++        var sizes: [Int64] = []
++        let subscription = self.observe { sizes.append($0.size) }
++        self.beginFetch()
++        self.write(0, [1, 2])
++        subscription.dispose()
++        self.queue.sync {}
++        self.write(2, [3, 4], complete: true)
++        self.queue.sync { XCTAssertEqual(sizes, [0, 2]) }
++    }
++
++    func testWaitingForInitialFetchSuppressesEmptyBeforeFetchButReportsPrefix() {
++        var values: [MediaResourceData] = []
++        self.observe(wait: true) { values.append($0) }
++        self.queue.sync { XCTAssertTrue(values.isEmpty) }
++        self.beginFetch()
++        self.write(0, [1, 2, 3])
++        self.queue.sync {
++            XCTAssertEqual(values.last?.size, 3)
++            XCTAssertFalse(values.last!.complete)
++        }
++    }
++}
+diff --git a/submodules/TelegramCore/Package.swift b/submodules/TelegramCore/Package.swift
+index 522a92db..183cd4f5 100644
+--- a/submodules/TelegramCore/Package.swift
++++ b/submodules/TelegramCore/Package.swift
+@@ -50,7 +50,12 @@ let package = Package(
+                            .product(name: "EncryptionProvider", package: "EncryptionProvider", condition: nil),
+                            .product(name: "MediaPreuploadRegistry", package: "MediaPreuploadRegistry", condition: nil)],
+             path: "Sources",
+-            swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]),
++            swiftSettings: [
++                .unsafeFlags([
++                    "-warnings-as-errors",
++                    "-Wwarning", "ImplicitStrongCapture"
++                ])
++            ]),
+         .testTarget(
+             name: "TelegramCoreTests",
+             dependencies: ["TelegramCore"],
+diff --git a/submodules/TelegramCore/Sources/Account/AccountManager.swift b/submodules/TelegramCore/Sources/Account/AccountManager.swift
+index c3c37c55..4caf99b9 100644
+--- a/submodules/TelegramCore/Sources/Account/AccountManager.swift
++++ b/submodules/TelegramCore/Sources/Account/AccountManager.swift
+@@ -140,6 +140,8 @@ private var declaredEncodables: Void = {
+     declareEncodable(SourceReferenceMessageAttribute.self, f: { SourceReferenceMessageAttribute(decoder: $0) })
+     declareEncodable(SourceAuthorInfoMessageAttribute.self, f: { SourceAuthorInfoMessageAttribute(decoder: $0) })
+     declareEncodable(EditedMessageAttribute.self, f: { EditedMessageAttribute(decoder: $0) })
++    declareEncodable(VeilDeletedMessageAttribute.self, f: { VeilDeletedMessageAttribute(decoder: $0) })
++    declareEncodable(VeilEditHistoryAttribute.self, f: { VeilEditHistoryAttribute(decoder: $0) })
+     declareEncodable(ReplyMarkupMessageAttribute.self, f: { ReplyMarkupMessageAttribute(decoder: $0) })
+     declareEncodable(OutgoingChatContextResultMessageAttribute.self, f: { OutgoingChatContextResultMessageAttribute(decoder: $0) })
+     declareEncodable(HttpReferenceMediaResource.self, f: { HttpReferenceMediaResource(decoder: $0) })
+diff --git a/submodules/TelegramCore/Sources/Ghost/GhostMessageArchive.swift b/submodules/TelegramCore/Sources/Ghost/GhostMessageArchive.swift
+new file mode 100644
+index 00000000..ecfc3c6e
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/Ghost/GhostMessageArchive.swift
+@@ -0,0 +1,140 @@
++import Foundation
++import Postbox
++
++public final class VeilDeletedMessageAttribute: MessageAttribute {
++    public let date: Int32
++
++    public init(date: Int32) {
++        self.date = date
++    }
++
++    required public init(decoder: PostboxDecoder) {
++        self.date = decoder.decodeInt32ForKey("d", orElse: 0)
++    }
++
++    public func encode(_ encoder: PostboxEncoder) {
++        encoder.encodeInt32(self.date, forKey: "d")
++    }
++}
++
++public final class VeilEditHistoryAttribute: MessageAttribute {
++    public struct Entry: Equatable {
++        public let text: String
++        public let date: Int32
++    }
++
++    public static let maxEntries = 20
++
++    public let entries: [Entry]
++
++    public init(entries: [Entry]) {
++        self.entries = entries
++    }
++
++    required public init(decoder: PostboxDecoder) {
++        let texts = decoder.decodeStringArrayForKey("t")
++        let dates = decoder.decodeInt32ArrayForKey("d")
++        var entries: [Entry] = []
++        for i in 0 ..< min(texts.count, dates.count) {
++            entries.append(Entry(text: texts[i], date: dates[i]))
++        }
++        self.entries = entries
++    }
++
++    public func encode(_ encoder: PostboxEncoder) {
++        encoder.encodeStringArray(self.entries.map { $0.text }, forKey: "t")
++        encoder.encodeInt32Array(self.entries.map { $0.date }, forKey: "d")
++    }
++}
++
++public extension Message {
++    var veilDeletedDate: Int32? {
++        for attribute in self.attributes {
++            if let attribute = attribute as? VeilDeletedMessageAttribute {
++                return attribute.date
++            }
++        }
++        return nil
++    }
++
++    var veilEditHistory: [VeilEditHistoryAttribute.Entry] {
++        for attribute in self.attributes {
++            if let attribute = attribute as? VeilEditHistoryAttribute {
++                return attribute.entries
++            }
++        }
++        return []
++    }
++}
++
++func ghostMergeArchivedAttributes(previous: [MessageAttribute], updated: inout [MessageAttribute]) {
++    if !updated.contains(where: { $0 is VeilDeletedMessageAttribute }), let attribute = previous.first(where: { $0 is VeilDeletedMessageAttribute }) {
++        updated.append(attribute)
++    }
++    if !updated.contains(where: { $0 is VeilEditHistoryAttribute }), let attribute = previous.first(where: { $0 is VeilEditHistoryAttribute }) {
++        updated.append(attribute)
++    }
++}
++
++private func ghostMarkMessageDeleted(transaction: Transaction, id: MessageId, date: Int32) {
++    transaction.updateMessage(id, update: { current in
++        var storeForwardInfo: StoreMessageForwardInfo?
++        if let forwardInfo = current.forwardInfo {
++            storeForwardInfo = StoreMessageForwardInfo(authorId: forwardInfo.author?.id, sourceId: forwardInfo.source?.id, sourceMessageId: forwardInfo.sourceMessageId, date: forwardInfo.date, authorSignature: forwardInfo.authorSignature, psaType: forwardInfo.psaType, flags: forwardInfo.flags)
++        }
++        var attributes = current.attributes
++        attributes.append(VeilDeletedMessageAttribute(date: date))
++        return .update(StoreMessage(id: current.id, customStableId: nil, globallyUniqueId: current.globallyUniqueId, groupingKey: current.groupingKey, threadId: current.threadId, timestamp: current.timestamp, flags: StoreMessageFlags(current.flags), tags: current.tags, globalTags: current.globalTags, localTags: current.localTags, forwardInfo: storeForwardInfo, authorId: current.author?.id, text: current.text, attributes: attributes, media: current.media))
++    })
++}
++
++private func ghostShouldPreserve(transaction: Transaction, id: MessageId, keep: Bool, date: Int32) -> Bool {
++    guard let message = transaction.getMessage(id) else {
++        return false
++    }
++    if message.veilDeletedDate != nil {
++        return true
++    }
++    guard keep, id.namespace == Namespaces.Message.Cloud else {
++        return false
++    }
++    ghostMarkMessageDeleted(transaction: transaction, id: id, date: date)
++    return true
++}
++
++func ghostMessageIdsToDelete(transaction: Transaction, ids: [MessageId]) -> [MessageId] {
++    if ids.isEmpty {
++        return ids
++    }
++    let keep = GhostMode.settings.keepDeletedMessages
++    let date = Int32(Date().timeIntervalSince1970)
++    return ids.filter { !ghostShouldPreserve(transaction: transaction, id: $0, keep: keep, date: date) }
++}
++
++func ghostGlobalIdsToDelete(transaction: Transaction, globalIds: [Int32]) -> [Int32] {
++    if globalIds.isEmpty {
++        return globalIds
++    }
++    let keep = GhostMode.settings.keepDeletedMessages
++    let date = Int32(Date().timeIntervalSince1970)
++    return globalIds.filter { globalId in
++        guard let id = transaction.messageIdsForGlobalIds([globalId]).first else {
++            return true
++        }
++        return !ghostShouldPreserve(transaction: transaction, id: id, keep: keep, date: date)
++    }
++}
++
++func ghostRecordingEditHistory(previous: Message, updated: StoreMessage) -> StoreMessage {
++    guard GhostMode.settings.keepEditHistory, previous.text != updated.text, !previous.text.isEmpty else {
++        return updated
++    }
++    var entries = previous.veilEditHistory
++    entries.append(VeilEditHistoryAttribute.Entry(text: previous.text, date: previous.editedTime ?? previous.timestamp))
++    if entries.count > VeilEditHistoryAttribute.maxEntries {
++        entries.removeFirst(entries.count - VeilEditHistoryAttribute.maxEntries)
++    }
++    var attributes = updated.attributes.filter { !($0 is VeilEditHistoryAttribute) }
++    attributes.append(VeilEditHistoryAttribute(entries: entries))
++    return updated.withUpdatedAttributes(attributes)
++}
+diff --git a/submodules/TelegramCore/Sources/Ghost/GhostMode.swift b/submodules/TelegramCore/Sources/Ghost/GhostMode.swift
+new file mode 100644
+index 00000000..469b9f58
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/Ghost/GhostMode.swift
+@@ -0,0 +1,124 @@
++import Foundation
++
++public final class GhostMode {
++    public struct Settings: Codable, Equatable {
++        public var enabled: Bool
++        public var hideReadReceipts: Bool
++        public var hideOnline: Bool
++        public var hideTyping: Bool
++        public var hideStoryViews: Bool
++        public var hideOpenedContent: Bool
++        public var keepDeletedMessages: Bool
++        public var keepEditHistory: Bool
++        public var readOnReply: Bool
++
++        public init(enabled: Bool = false, hideReadReceipts: Bool = true, hideOnline: Bool = true, hideTyping: Bool = true, hideStoryViews: Bool = true, hideOpenedContent: Bool = true, keepDeletedMessages: Bool = true, keepEditHistory: Bool = true, readOnReply: Bool = true) {
++            self.enabled = enabled
++            self.hideReadReceipts = hideReadReceipts
++            self.hideOnline = hideOnline
++            self.hideTyping = hideTyping
++            self.hideStoryViews = hideStoryViews
++            self.hideOpenedContent = hideOpenedContent
++            self.keepDeletedMessages = keepDeletedMessages
++            self.keepEditHistory = keepEditHistory
++            self.readOnReply = readOnReply
++        }
++
++        public init(from decoder: Decoder) throws {
++            let container = try decoder.container(keyedBy: CodingKeys.self)
++            let defaults = Settings()
++            self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
++            self.hideReadReceipts = try container.decodeIfPresent(Bool.self, forKey: .hideReadReceipts) ?? defaults.hideReadReceipts
++            self.hideOnline = try container.decodeIfPresent(Bool.self, forKey: .hideOnline) ?? defaults.hideOnline
++            self.hideTyping = try container.decodeIfPresent(Bool.self, forKey: .hideTyping) ?? defaults.hideTyping
++            self.hideStoryViews = try container.decodeIfPresent(Bool.self, forKey: .hideStoryViews) ?? defaults.hideStoryViews
++            self.hideOpenedContent = try container.decodeIfPresent(Bool.self, forKey: .hideOpenedContent) ?? defaults.hideOpenedContent
++            self.keepDeletedMessages = try container.decodeIfPresent(Bool.self, forKey: .keepDeletedMessages) ?? defaults.keepDeletedMessages
++            self.keepEditHistory = try container.decodeIfPresent(Bool.self, forKey: .keepEditHistory) ?? defaults.keepEditHistory
++            self.readOnReply = try container.decodeIfPresent(Bool.self, forKey: .readOnReply) ?? defaults.readOnReply
++        }
++    }
++
++    public struct Flags: Equatable {
++        public let hideReadReceipts: Bool
++        public let hideOnline: Bool
++        public let hideTyping: Bool
++        public let hideStoryViews: Bool
++        public let hideOpenedContent: Bool
++        public let readOnReply: Bool
++
++        init(_ settings: Settings) {
++            self.hideReadReceipts = settings.enabled && settings.hideReadReceipts
++            self.hideOnline = settings.enabled && settings.hideOnline
++            self.hideTyping = settings.enabled && settings.hideTyping
++            self.hideStoryViews = settings.enabled && settings.hideStoryViews
++            self.hideOpenedContent = settings.enabled && settings.hideOpenedContent
++            self.readOnReply = settings.enabled && settings.hideReadReceipts && settings.readOnReply
++        }
++    }
++
++    private static let defaultsKey = "veil.ghostMode"
++    private static let lock = NSLock()
++    private static var storedSettings: Settings = {
++        if let data = UserDefaults.standard.data(forKey: defaultsKey), let value = try? JSONDecoder().decode(Settings.self, from: data) {
++            return value
++        }
++        return Settings()
++    }()
++    private static var listeners: [Int: (Settings) -> Void] = [:]
++    private static var nextListenerId = 0
++
++    public static var settings: Settings {
++        get {
++            lock.lock()
++            defer { lock.unlock() }
++            return storedSettings
++        }
++        set {
++            lock.lock()
++            let changed = storedSettings != newValue
++            storedSettings = newValue
++            let currentListeners = Array(listeners.values)
++            lock.unlock()
++            guard changed else {
++                return
++            }
++            if let data = try? JSONEncoder().encode(newValue) {
++                UserDefaults.standard.set(data, forKey: defaultsKey)
++            }
++            for listener in currentListeners {
++                listener(newValue)
++            }
++        }
++    }
++
++    public static var flags: Flags {
++        return Flags(settings)
++    }
++
++    public static func update(_ f: (inout Settings) -> Void) {
++        var value = settings
++        f(&value)
++        settings = value
++    }
++
++    @discardableResult
++    public static func addListener(_ f: @escaping (Settings) -> Void) -> Int {
++        lock.lock()
++        let id = nextListenerId
++        nextListenerId += 1
++        listeners[id] = f
++        lock.unlock()
++        return id
++    }
++
++    public static func removeListener(_ id: Int) {
++        lock.lock()
++        listeners[id] = nil
++        lock.unlock()
++    }
++}
++
++public enum VeilPrivacy {
++    public static let blocksTelemetry = true
++}
+diff --git a/submodules/TelegramCore/Sources/Ghost/GhostReadOnReply.swift b/submodules/TelegramCore/Sources/Ghost/GhostReadOnReply.swift
+new file mode 100644
+index 00000000..acd37758
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/Ghost/GhostReadOnReply.swift
+@@ -0,0 +1,35 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++internal import TelegramApi
++
++func ghostMarkPeerReadOnReply(account: Account, peerId: PeerId) {
++    guard GhostMode.flags.readOnReply, peerId.namespace != Namespaces.Peer.SecretChat else {
++        return
++    }
++    let network = account.network
++    let _ = (account.postbox.transaction { transaction -> (Api.InputPeer?, Int32?) in
++        let inputPeer = transaction.getPeer(peerId).flatMap(apiInputPeer)
++        let topId = transaction.getTopPeerMessageId(peerId: peerId, namespace: Namespaces.Message.Cloud)?.id
++        return (inputPeer, topId)
++    }
++    |> mapToSignal { inputPeer, topId -> Signal<Never, NoError> in
++        guard let inputPeer = inputPeer, let topId = topId, topId > 0 else {
++            return .complete()
++        }
++        switch inputPeer {
++        case let .inputPeerChannel(data):
++            return network.request(Api.functions.channels.readHistory(channel: Api.InputChannel.inputChannel(.init(channelId: data.channelId, accessHash: data.accessHash)), maxId: topId))
++            |> `catch` { _ -> Signal<Api.Bool, NoError> in
++                return .complete()
++            }
++            |> ignoreValues
++        default:
++            return network.request(Api.functions.messages.readHistory(peer: inputPeer, maxId: topId))
++            |> `catch` { _ -> Signal<Api.messages.AffectedMessages, NoError> in
++                return .complete()
++            }
++            |> ignoreValues
++        }
++    }).start()
++}
+diff --git a/submodules/TelegramCore/Sources/Network/NetworkTelemetryReporter.swift b/submodules/TelegramCore/Sources/Network/NetworkTelemetryReporter.swift
+index 3d18d399..0889d866 100644
+--- a/submodules/TelegramCore/Sources/Network/NetworkTelemetryReporter.swift
++++ b/submodules/TelegramCore/Sources/Network/NetworkTelemetryReporter.swift
+@@ -169,6 +169,7 @@ func _internal_enqueueNetworkTelemetryEvents(postbox: Postbox, events: [NetworkT
+ /// Reports the account's network telemetry through `help.saveAppLog` while `network_telemetry_enabled`
+ /// is set. Checks a minute after start, which also sends what earlier launches left, then every 15 minutes.
+ func managedNetworkTelemetryReports(postbox: Postbox, network: Network) -> Signal<Never, NoError> {
++    if VeilPrivacy.blocksTelemetry { return .complete() }
+     guard AppLogEventCollection.allowsLegacyEvents else { return .complete() }
+     guard let telemetry = network.telemetry else {
+         return .complete()
+diff --git a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
+index b4d7bb4b..4fe7ef8a 100644
+--- a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
++++ b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
+@@ -759,6 +759,7 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
+ }
+ 
+ public func enqueueMessages(account: Account, peerId: PeerId, messages: [EnqueueMessage]) -> Signal<[MessageId?], NoError> {
++    ghostMarkPeerReadOnReply(account: account, peerId: peerId)
+     let signal: Signal<[(Bool, EnqueueMessage)], NoError>
+     if let transformOutgoingMessageMedia = account.transformOutgoingMessageMedia {
+         signal = opportunisticallyTransformOutgoingMedia(network: account.network, postbox: account.postbox, transformOutgoingMessageMedia: transformOutgoingMessageMedia, messages: messages, userInteractive: true)
+diff --git a/submodules/TelegramCore/Sources/State/AccountStateManager.swift b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
+index 74ca3928..e8b6b924 100644
+--- a/submodules/TelegramCore/Sources/State/AccountStateManager.swift
++++ b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
+@@ -136,6 +136,10 @@ public final class AccountStateManager {
+         let auxiliaryMethods: AccountAuxiliaryMethods
+         private let ignoresShortSentMessages: Bool
+         
++        #if os(macOS)
++        let audioFileTranscriptionUpdatesPipe = ValuePipe<AudioFileTranscription>()
++        #endif
++
+         private var updateService: UpdateMessageService?
+         private let updateServiceDisposable = MetaDisposable()
+         
+@@ -457,6 +461,11 @@ public final class AccountStateManager {
+         
+         func addUpdateGroups(_ groups: [UpdateGroup]) {
+             self.queue.async {
++                #if os(macOS)
++                for result in audioFileTranscriptionsFromUpdates(groups.flatMap { $0.updates }) {
++                    self.audioFileTranscriptionUpdatesPipe.putNext(result)
++                }
++                #endif
+                 if self.operations.absorbUpdateGroups(groups) {
+                     self.startFirstOperation()
+                 } else {
+@@ -1305,6 +1314,14 @@ public final class AccountStateManager {
+         }
+     }
+     
++    #if os(macOS)
++    func audioFileTranscriptionUpdates() -> Signal<AudioFileTranscription, NoError> {
++        return self.impl.signalWith { impl, subscriber in
++            return impl.audioFileTranscriptionUpdatesPipe.signal().start(next: subscriber.putNext)
++        }
++    }
++    #endif
++
+     public func updatedStarsBalance() -> Signal<[PeerId: StarsAmount], NoError> {
+         return self.impl.signalWith { impl, subscriber in
+             return impl.updatedStarsBalance().start(next: subscriber.putNext, error: subscriber.putError, completed: subscriber.putCompletion)
+diff --git a/submodules/TelegramCore/Sources/State/HistoryViewStateValidation.swift b/submodules/TelegramCore/Sources/State/HistoryViewStateValidation.swift
+index 3dc6c7d5..3a04f62e 100644
+--- a/submodules/TelegramCore/Sources/State/HistoryViewStateValidation.swift
++++ b/submodules/TelegramCore/Sources/State/HistoryViewStateValidation.swift
+@@ -992,7 +992,7 @@ private func validateBatch(postbox: Postbox, network: Network, transaction: Tran
+                                         return .update(StoreMessage(id: currentMessage.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: StoreMessageFlags(currentMessage.flags), tags: updatedTags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: attributes, media: currentMessage.media))
+                                     })
+                                 } else {
+-                                    _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: [id])
++                                    _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: ghostMessageIdsToDelete(transaction: transaction, ids: [id]))
+                                     Logger.shared.log("HistoryValidation", "deleting message \(id) in \(id.peerId)")
+                                 }
+                             }
+@@ -1175,7 +1175,7 @@ private func validateReplyThreadBatch(postbox: Postbox, network: Network, transa
+                 
+                     for id in removedMessageIds {
+                         if !validMessageIds.contains(id) {
+-                            _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: [id])
++                            _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: ghostMessageIdsToDelete(transaction: transaction, ids: [id]))
+                             Logger.shared.log("HistoryValidation", "deleting thread message \(id) in \(id.peerId)")
+                         }
+                     }
+diff --git a/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift b/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
+index 7256668b..dc275f45 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
+@@ -42,9 +42,29 @@ private final class AccountPresenceManagerImpl {
+         self.onlineTimer?.invalidate()
+     }
+     
++    private var ghostOfflineSent = false
++
+     private func updatePresence(_ isOnline: Bool) {
+         let request: Signal<Api.Bool, MTRpcError>
+-        if isOnline {
++        let ghostHidesOnline = GhostMode.flags.hideOnline
++        if !ghostHidesOnline {
++            self.ghostOfflineSent = false
++        }
++        if isOnline && ghostHidesOnline {
++            let timer = SignalKitTimer(timeout: 30.0, repeat: false, completion: { [weak self] in
++                guard let strongSelf = self else {
++                    return
++                }
++                strongSelf.updatePresence(true)
++            }, queue: self.queue)
++            self.onlineTimer = timer
++            timer.start()
++            if self.ghostOfflineSent {
++                return
++            }
++            self.ghostOfflineSent = true
++            request = self.network.request(Api.functions.account.updateStatus(offline: .boolTrue))
++        } else if isOnline {
+             let timer = SignalKitTimer(timeout: 30.0, repeat: false, completion: { [weak self] in
+                 guard let strongSelf = self else {
+                     return
+diff --git a/submodules/TelegramCore/Sources/State/ManagedConsumePersonalMessagesActions.swift b/submodules/TelegramCore/Sources/State/ManagedConsumePersonalMessagesActions.swift
+index bb453264..a6d58c96 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedConsumePersonalMessagesActions.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedConsumePersonalMessagesActions.swift
+@@ -252,6 +252,9 @@ func managedReadReactionOrPollVoteActions(postbox: Postbox, network: Network, st
+ }
+ 
+ private func synchronizeConsumeMessageContents(transaction: Transaction, postbox: Postbox, network: Network, stateManager: AccountStateManager, id: MessageId) -> Signal<Void, NoError> {
++    if GhostMode.flags.hideOpenedContent {
++        return .complete()
++    }
+     if id.peerId.namespace == Namespaces.Peer.CloudUser || id.peerId.namespace == Namespaces.Peer.CloudGroup {
+         return network.request(Api.functions.messages.readMessageContents(id: [id.id]))
+             |> map(Optional.init)
+diff --git a/submodules/TelegramCore/Sources/State/ManagedLocalInputActivities.swift b/submodules/TelegramCore/Sources/State/ManagedLocalInputActivities.swift
+index e8e08874..60c7d0f4 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedLocalInputActivities.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedLocalInputActivities.swift
+@@ -142,6 +142,9 @@ private func actionFromActivity(_ activity: PeerInputActivity?) -> Api.SendMessa
+ }
+ 
+ private func requestActivity(postbox: Postbox, network: Network, accountPeerId: PeerId, peerId: PeerId, threadId: Int64?, activity: PeerInputActivity?) -> Signal<Void, NoError> {
++    if GhostMode.flags.hideTyping {
++        return .complete()
++    }
+     return postbox.transaction { transaction -> Signal<Void, NoError> in
+         if let peer = transaction.getPeer(peerId) {
+             if peerId == accountPeerId {
+diff --git a/submodules/TelegramCore/Sources/State/ManagedSynchronizeAppLogEventsOperations.swift b/submodules/TelegramCore/Sources/State/ManagedSynchronizeAppLogEventsOperations.swift
+index 4a6f0e92..cbda1206 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedSynchronizeAppLogEventsOperations.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedSynchronizeAppLogEventsOperations.swift
+@@ -42,10 +42,8 @@ func managedSynchronizeAppLogEventsOperations(postbox: Postbox, network: Network
+         return postbox.mergedOperationLogView(tag: tag, limit: appLogEventsBatchLimit)
+         |> take(1)
+         |> mapToSignal { view -> Signal<Void, NoError> in
+-            return synchronizeAppLogEventsBatch(postbox: postbox, entries: view.entries, send: { events in
+-                return network.request(Api.functions.help.saveAppLog(events: events))
+-                |> `catch` { _ -> Signal<Api.Bool, NoError> in .complete() }
+-                |> mapToSignal { _ -> Signal<Void, NoError> in .complete() }
++            return synchronizeAppLogEventsBatch(postbox: postbox, entries: view.entries, send: { _ in
++                return .complete()
+             })
+         }
+     }
+diff --git a/submodules/TelegramCore/Sources/State/ManagedSynchronizeConsumeMessageContentsOperations.swift b/submodules/TelegramCore/Sources/State/ManagedSynchronizeConsumeMessageContentsOperations.swift
+index b5ede6a8..42b9011a 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedSynchronizeConsumeMessageContentsOperations.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedSynchronizeConsumeMessageContentsOperations.swift
+@@ -110,6 +110,9 @@ func managedSynchronizeConsumeMessageContentOperations(postbox: Postbox, network
+ }
+ 
+ private func synchronizeConsumeMessageContents(transaction: Transaction, network: Network, stateManager: AccountStateManager, peerId: PeerId, operation: SynchronizeConsumeMessageContentsOperation) -> Signal<Void, NoError> {
++    if GhostMode.flags.hideOpenedContent {
++        return .complete()
++    }
+     if peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup {
+         return network.request(Api.functions.messages.readMessageContents(id: operation.messageIds.map { $0.id }))
+         |> map(Optional.init)
+diff --git a/submodules/TelegramCore/Sources/State/ManagedSynchronizeViewStoriesOperations.swift b/submodules/TelegramCore/Sources/State/ManagedSynchronizeViewStoriesOperations.swift
+index e38c0f96..a17bd176 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedSynchronizeViewStoriesOperations.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedSynchronizeViewStoriesOperations.swift
+@@ -119,6 +119,9 @@ func managedSynchronizeViewStoriesOperations(postbox: Postbox, network: Network,
+ }
+ 
+ private func pushStoriesAreSeen(postbox: Postbox, network: Network, stateManager: AccountStateManager, peer: Peer, operation: SynchronizeViewStoriesOperation) -> Signal<Void, NoError> {
++    if GhostMode.flags.hideStoryViews {
++        return .complete()
++    }
+     guard let inputPeer = apiInputPeer(peer) else {
+         return .complete()
+     }
+diff --git a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
+index 79fcb6e0..b2eb791e 100644
+--- a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
++++ b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
+@@ -86,7 +86,7 @@ public enum PendingMessageFailureReason {
+     case nonPremiumMessagesForbidden
+ }
+ 
+-func sendMessageReasonForError(_ error: String) -> PendingMessageFailureReason? {
++public func sendMessageReasonForError(_ error: String) -> PendingMessageFailureReason? {
+     if error.hasPrefix("PEER_FLOOD") {
+         return .flood
+     } else if error.hasPrefix("SENDING_TOO_FAST") {
+@@ -122,7 +122,7 @@ public struct PeerPendingMessageDelivered {
+ 
+ private final class PeerPendingMessagesSummaryContext {
+     var messageDeliveredSubscribers = Bag<([PeerPendingMessageDelivered]) -> Void>()
+-    var messageFailedSubscribers = Bag<(MessageId.Namespace, PendingMessageFailureReason) -> Void>()
++    var messageFailedSubscribers = Bag<(MessageId.Namespace, String) -> Void>()
+     var newTopicEvents = Bag<(PendingMessageManager.NewTopicEvent) -> Void>()
+     
+     var isEmpty: Bool {
+@@ -172,7 +172,7 @@ private func shouldPassFetchProgressForMessage(_ message: Message) -> Bool {
+     return false
+ }
+ 
+-private func failMessages(postbox: Postbox, ids: [MessageId]) -> Signal<Void, NoError> {
++private func failMessages(postbox: Postbox, ids: [MessageId], errorCode: String = "internal") -> Signal<Void, NoError> {
+     let modify = postbox.transaction { transaction -> Void in
+         for id in ids {
+             transaction.updateMessage(id, update: { currentMessage in
+@@ -180,7 +180,13 @@ private func failMessages(postbox: Postbox, ids: [MessageId]) -> Signal<Void, No
+                 if let forwardInfo = currentMessage.forwardInfo {
+                     storeForwardInfo = StoreMessageForwardInfo(authorId: forwardInfo.author?.id, sourceId: forwardInfo.source?.id, sourceMessageId: forwardInfo.sourceMessageId, date: forwardInfo.date, authorSignature: forwardInfo.authorSignature, psaType: forwardInfo.psaType, flags: forwardInfo.flags)
+                 }
+-                return .update(StoreMessage(id: id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: [.Failed], tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: currentMessage.attributes, media: currentMessage.media))
++                let attributes: [MessageAttribute] = currentMessage.attributes.map { attribute in
++                    if let info = attribute as? OutgoingMessageInfoAttribute {
++                        return info.withSendErrorCode(errorCode)
++                    }
++                    return attribute
++                }
++                return .update(StoreMessage(id: id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: [.Failed], tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: attributes, media: currentMessage.media))
+             })
+         }
+     }
+@@ -1052,6 +1058,24 @@ public final class PendingMessageManager {
+         }))
+     }
+     
++    private func notifyMessageFailure(ids: [MessageId], code: String) {
++        if let reason = sendMessageReasonForError(code) {
++            for id in ids {
++                if let context = self.messageContexts[id] {
++                    context.error = reason
++                    for subscriber in context.statusSubscribers.copyItems() {
++                        subscriber(context.status, context.error)
++                    }
++                }
++            }
++        }
++        if let id = ids.first, let context = self.peerSummaryContexts[id.peerId] {
++            for subscriber in context.messageFailedSubscribers.copyItems() {
++                subscriber(id.namespace, code)
++            }
++        }
++    }
++
+     private func beginUploadingMessage(messageContext: PendingMessageContext, id: MessageId, threadId: Int64?, groupId: Int64?, uploadSignal: Signal<PendingMessageUploadedContentResult, PendingMessageUploadError>) {
+         messageContext.state = .uploading(groupId: groupId)
+         
+@@ -1074,22 +1098,14 @@ public final class PendingMessageManager {
+         messageContext.uploadDisposable.set((uploadSignal
+         |> deliverOn(queue)
+         |> `catch` { [weak self] _ -> Signal<PendingMessageUploadedContentResult, NoError> in
+-            if let strongSelf = self {
+-                let modify = strongSelf.postbox.transaction { transaction -> Void in
+-                    transaction.updateMessage(id, update: { currentMessage in
+-                        var storeForwardInfo: StoreMessageForwardInfo?
+-                        if let forwardInfo = currentMessage.forwardInfo {
+-                            storeForwardInfo = StoreMessageForwardInfo(authorId: forwardInfo.author?.id, sourceId: forwardInfo.source?.id, sourceMessageId: forwardInfo.sourceMessageId, date: forwardInfo.date, authorSignature: forwardInfo.authorSignature, psaType: forwardInfo.psaType, flags: forwardInfo.flags)
+-                        }
+-                        return .update(StoreMessage(id: id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: [.Failed], tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: currentMessage.attributes, media: currentMessage.media))
+-                    })
+-                }
+-                return modify
+-                |> mapToSignal { _ in
+-                    return .complete()
+-                }
++            guard let self else {
++                return .complete()
++            }
++            self.notifyMessageFailure(ids: [id], code: "internal")
++            return failMessages(postbox: self.postbox, ids: [id])
++            |> mapToSignal { _ in
++                return .complete()
+             }
+-            return .complete()
+         }
+         |> deliverOn(queue)).start(next: { [weak self] next in
+             if let strongSelf = self {
+@@ -1583,24 +1599,10 @@ public final class PendingMessageManager {
+                                         return .complete()
+                                     }
+                                 }
+-                            } else if let failureReason = sendMessageReasonForError(error.errorDescription), let message = messages.first?.0 {
+-                                for (message, _) in messages {
+-                                    if let context = strongSelf.messageContexts[message.id] {
+-                                        context.error = failureReason
+-                                        for f in context.statusSubscribers.copyItems() {
+-                                            f(context.status, context.error)
+-                                        }
+-                                    }
+-                                }
+-                                
+-                                if let context = strongSelf.peerSummaryContexts[message.id.peerId] {
+-                                    for subscriber in context.messageFailedSubscribers.copyItems() {
+-                                        subscriber(message.id.namespace, failureReason)
+-                                    }
+-                                }
+                             }
++                            strongSelf.notifyMessageFailure(ids: messages.map { $0.0.id }, code: errorText)
+                         }
+-                        return failMessages(postbox: postbox, ids: group.map { $0.0 })
++                        return failMessages(postbox: postbox, ids: group.map { $0.0 }, errorCode: error.errorDescription)
+                     } |> runOn(queue)
+                 }
+             } else {
+@@ -2148,43 +2150,15 @@ public final class PendingMessageManager {
+                                 strongSelf.beginSendingMessages([messageId])
+                                 return
+                             }
+-                        } else if let failureReason = sendMessageReasonForError(error.errorDescription) {
+-                            if let context = strongSelf.messageContexts[message.id] {
+-                                context.error = failureReason
+-                                for f in context.statusSubscribers.copyItems() {
+-                                    f(context.status, context.error)
+-                                }
+-                            }
+-                            
+-                            if let context = strongSelf.peerSummaryContexts[message.id.peerId] {
+-                                for subscriber in context.messageFailedSubscribers.copyItems() {
+-                                    subscriber(message.id.namespace, failureReason)
+-                                }
+-                            }
+                         }
+-                        let _ = (postbox.transaction { transaction -> Void in
+-                            transaction.updateMessage(message.id, update: { currentMessage in
+-                                var storeForwardInfo: StoreMessageForwardInfo?
+-                                if let forwardInfo = currentMessage.forwardInfo {
+-                                    storeForwardInfo = StoreMessageForwardInfo(authorId: forwardInfo.author?.id, sourceId: forwardInfo.source?.id, sourceMessageId: forwardInfo.sourceMessageId, date: forwardInfo.date, authorSignature: forwardInfo.authorSignature, psaType: forwardInfo.psaType, flags: forwardInfo.flags)
+-                                }
+-                                return .update(StoreMessage(id: message.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: [.Failed], tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: currentMessage.attributes, media: currentMessage.media))
+-                            })
+-                        }).start()
++                        strongSelf.notifyMessageFailure(ids: [messageId], code: error.errorDescription)
++                        let _ = failMessages(postbox: postbox, ids: [messageId], errorCode: error.errorDescription).start()
+                     }
+                     
+                     return .complete()
+                 }
+             } else {
+-                return postbox.transaction { transaction -> Void in
+-                    transaction.updateMessage(message.id, update: { currentMessage in
+-                        var storeForwardInfo: StoreMessageForwardInfo?
+-                        if let forwardInfo = currentMessage.forwardInfo {
+-                            storeForwardInfo = StoreMessageForwardInfo(authorId: forwardInfo.author?.id, sourceId: forwardInfo.source?.id, sourceMessageId: forwardInfo.sourceMessageId, date: forwardInfo.date, authorSignature: forwardInfo.authorSignature, psaType: forwardInfo.psaType, flags: forwardInfo.flags)
+-                        }
+-                        return .update(StoreMessage(id: message.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: [.Failed], tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: currentMessage.attributes, media: currentMessage.media))
+-                    })
+-                }
++                return failMessages(postbox: postbox, ids: [messageId])
+             }
+         } |> switchToLatest
+     }
+@@ -2362,6 +2336,16 @@ public final class PendingMessageManager {
+     }
+     
+     public func failedMessageEvents(peerId: PeerId, isScheduled: Bool) -> Signal<PendingMessageFailureReason, NoError> {
++        return self.failedMessageErrorEvents(peerId: peerId, isScheduled: isScheduled)
++        |> mapToSignal { code -> Signal<PendingMessageFailureReason, NoError> in
++            if let reason = sendMessageReasonForError(code) {
++                return .single(reason)
++            }
++            return .complete()
++        }
++    }
++
++    public func failedMessageErrorEvents(peerId: PeerId, isScheduled: Bool) -> Signal<String, NoError> {
+         return Signal { subscriber in
+             let disposable = MetaDisposable()
+             
+@@ -2374,15 +2358,9 @@ public final class PendingMessageManager {
+                     self.peerSummaryContexts[peerId] = summaryContext
+                 }
+                 
+-                let index = summaryContext.messageFailedSubscribers.add({ namespace, reason in
+-                    if isScheduled {
+-                        if Namespaces.Message.allScheduled.contains(namespace) {
+-                            subscriber.putNext(reason)
+-                        }
+-                    } else {
+-                        if !Namespaces.Message.allScheduled.contains(namespace) {
+-                            subscriber.putNext(reason)
+-                        }
++                let index = summaryContext.messageFailedSubscribers.add({ namespace, code in
++                    if Namespaces.Message.allScheduled.contains(namespace) == isScheduled {
++                        subscriber.putNext(code)
+                     }
+                 })
+                 
+diff --git a/submodules/TelegramCore/Sources/State/StoredMessageConfirmation.swift b/submodules/TelegramCore/Sources/State/StoredMessageConfirmation.swift
+index 49d68a37..ab2e8455 100644
+--- a/submodules/TelegramCore/Sources/State/StoredMessageConfirmation.swift
++++ b/submodules/TelegramCore/Sources/State/StoredMessageConfirmation.swift
+@@ -211,6 +211,7 @@ func confirmStoredMessages(accountPeerId: PeerId, postbox: Postbox, source: Fetc
+ /// Returns the ids it deleted: the private-chat and basic-group ones, then the channel ones, each in the order given.
+ @discardableResult
+ func deleteStoredMessagesAsReceivedDeletion(transaction: Transaction, mediaBox: MediaBox, ids: [MessageId]) -> [MessageId] {
++    let ids = ghostMessageIdsToDelete(transaction: transaction, ids: ids)
+     var regularIds: [MessageId] = []
+     var channelIds: [MessageId] = []
+     for id in ids {
+diff --git a/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift b/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
+index cf1ab15d..77a1b9ec 100644
+--- a/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
++++ b/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
+@@ -274,6 +274,10 @@ extension ReplayContext {
+     }
+     
+     func applyDeleteMessagesWithGlobalIds(_ ids: [Int32]) {
++        let ids = ghostGlobalIdsToDelete(transaction: transaction, globalIds: ids)
++        if ids.isEmpty {
++            return
++        }
+         var resourceIds: [MediaResourceId] = []
+         transaction.deleteMessagesWithGlobalIds(ids, forEachMedia: { media in
+             addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
+@@ -285,6 +289,10 @@ extension ReplayContext {
+     }
+     
+     func applyDeleteMessages(_ ids: [MessageId]) {
++        let ids = ghostMessageIdsToDelete(transaction: transaction, ids: ids)
++        if ids.isEmpty {
++            return
++        }
+         _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids, manualAddMessageThreadStatsDifference: { id, add, remove in
+             self.addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)
+         })
+@@ -317,7 +325,7 @@ extension ReplayContext {
+                 generatedEvent = reactionGeneratedEvent(previousMessage.reactionsAttribute, message.reactionsAttribute, message: message, transaction: transaction)
+             }
+ 
+-            return .update(mergedServerMessageUpdate(previous: previousMessage, updated: message))
++            return .update(ghostRecordingEditHistory(previous: previousMessage, updated: mergedServerMessageUpdate(previous: previousMessage, updated: message)))
+         })
+         // A fetch in flight may be bringing the message with its old content, over the edited one or, with none stored
+         // here, instead of it; it stores this edit in its place (Postbox's record of recent edits,
+diff --git a/submodules/TelegramCore/Sources/State/SynchronizePeerReadState.swift b/submodules/TelegramCore/Sources/State/SynchronizePeerReadState.swift
+index b2e65895..1a81e782 100644
+--- a/submodules/TelegramCore/Sources/State/SynchronizePeerReadState.swift
++++ b/submodules/TelegramCore/Sources/State/SynchronizePeerReadState.swift
+@@ -252,6 +252,9 @@ private func validatePeerReadState(network: Network, postbox: Postbox, stateMana
+ }
+ 
+ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager: AccountStateManager, peerId: PeerId, readState: PeerReadState) -> Signal<PeerReadState, PeerReadStateValidationError> {
++    if GhostMode.flags.hideReadReceipts {
++        return .single(readState)
++    }
+     if peerId.namespace == Namespaces.Peer.SecretChat {
+         // Decide whether a request is needed before looking the peer up: inputSecretChat goes
+         // through loadedPeerWithId, which never emits when the peer row is missing and fails
+diff --git a/submodules/TelegramCore/Sources/SyncCore/SyncCore_OutgoingMessageInfoAttribute.swift b/submodules/TelegramCore/Sources/SyncCore/SyncCore_OutgoingMessageInfoAttribute.swift
+index 6f7c4e02..9182c6a7 100644
+--- a/submodules/TelegramCore/Sources/SyncCore/SyncCore_OutgoingMessageInfoAttribute.swift
++++ b/submodules/TelegramCore/Sources/SyncCore/SyncCore_OutgoingMessageInfoAttribute.swift
+@@ -22,14 +22,16 @@ public class OutgoingMessageInfoAttribute: MessageAttribute {
+     public let correlationId: Int64?
+     public let bubbleUpEmojiOrStickersets: [ItemCollectionId]
+     public let partialReference: PartialMediaReference?
++    public let sendErrorCode: String?
+     
+-    public init(uniqueId: Int64, flags: OutgoingMessageInfoFlags, acknowledged: Bool, correlationId: Int64?, bubbleUpEmojiOrStickersets: [ItemCollectionId], partialReference: PartialMediaReference?) {
++    public init(uniqueId: Int64, flags: OutgoingMessageInfoFlags, acknowledged: Bool, correlationId: Int64?, bubbleUpEmojiOrStickersets: [ItemCollectionId], partialReference: PartialMediaReference?, sendErrorCode: String? = nil) {
+         self.uniqueId = uniqueId
+         self.flags = flags
+         self.acknowledged = acknowledged
+         self.correlationId = correlationId
+         self.bubbleUpEmojiOrStickersets = bubbleUpEmojiOrStickersets
+         self.partialReference = partialReference
++        self.sendErrorCode = sendErrorCode
+     }
+     
+     required public init(decoder: PostboxDecoder) {
+@@ -37,6 +39,7 @@ public class OutgoingMessageInfoAttribute: MessageAttribute {
+         self.flags = OutgoingMessageInfoFlags(rawValue: decoder.decodeInt32ForKey("f", orElse: 0))
+         self.acknowledged = decoder.decodeInt32ForKey("ack", orElse: 0) != 0
+         self.correlationId = decoder.decodeOptionalInt64ForKey("cid")
++        self.sendErrorCode = decoder.decodeOptionalStringForKey("sendErrorCode")
+         if let data = decoder.decodeDataForKey("bubbleUpEmojiOrStickersets") {
+             self.bubbleUpEmojiOrStickersets = ItemCollectionId.decodeArrayFromBuffer(ReadBuffer(data: data))
+         } else {
+@@ -58,6 +61,9 @@ public class OutgoingMessageInfoAttribute: MessageAttribute {
+         } else {
+             encoder.encodeNil(forKey: "cid")
+         }
++        if let sendErrorCode = self.sendErrorCode {
++            encoder.encodeString(sendErrorCode, forKey: "sendErrorCode")
++        }
+         let bubbleUpEmojiOrStickersetsBuffer = WriteBuffer()
+         ItemCollectionId.encodeArrayToBuffer(self.bubbleUpEmojiOrStickersets, buffer: bubbleUpEmojiOrStickersetsBuffer)
+         encoder.encodeData(bubbleUpEmojiOrStickersetsBuffer.makeData(), forKey: "bubbleUpEmojiOrStickersets")
+@@ -69,10 +75,14 @@ public class OutgoingMessageInfoAttribute: MessageAttribute {
+     }
+     
+     public func withUpdatedFlags(_ flags: OutgoingMessageInfoFlags) -> OutgoingMessageInfoAttribute {
+-        return OutgoingMessageInfoAttribute(uniqueId: self.uniqueId, flags: flags, acknowledged: self.acknowledged, correlationId: self.correlationId, bubbleUpEmojiOrStickersets: self.bubbleUpEmojiOrStickersets, partialReference: self.partialReference)
++        return OutgoingMessageInfoAttribute(uniqueId: self.uniqueId, flags: flags, acknowledged: self.acknowledged, correlationId: self.correlationId, bubbleUpEmojiOrStickersets: self.bubbleUpEmojiOrStickersets, partialReference: self.partialReference, sendErrorCode: self.sendErrorCode)
+     }
+     
++    func withSendErrorCode(_ code: String) -> OutgoingMessageInfoAttribute {
++        return OutgoingMessageInfoAttribute(uniqueId: self.uniqueId, flags: self.flags, acknowledged: self.acknowledged, correlationId: self.correlationId, bubbleUpEmojiOrStickersets: self.bubbleUpEmojiOrStickersets, partialReference: self.partialReference, sendErrorCode: code)
++    }
++
+     public func withUpdatedAcknowledged(_ acknowledged: Bool) -> OutgoingMessageInfoAttribute {
+-        return OutgoingMessageInfoAttribute(uniqueId: self.uniqueId, flags: self.flags, acknowledged: acknowledged, correlationId: self.correlationId, bubbleUpEmojiOrStickersets: self.bubbleUpEmojiOrStickersets, partialReference: self.partialReference)
++        return OutgoingMessageInfoAttribute(uniqueId: self.uniqueId, flags: self.flags, acknowledged: acknowledged, correlationId: self.correlationId, bubbleUpEmojiOrStickersets: self.bubbleUpEmojiOrStickersets, partialReference: self.partialReference, sendErrorCode: self.sendErrorCode)
+     }
+ }
+diff --git a/submodules/TelegramCore/Sources/SyncCore/SyncCore_StandaloneAccountTransaction.swift b/submodules/TelegramCore/Sources/SyncCore/SyncCore_StandaloneAccountTransaction.swift
+index 91c5c772..a67e72e5 100644
+--- a/submodules/TelegramCore/Sources/SyncCore/SyncCore_StandaloneAccountTransaction.swift
++++ b/submodules/TelegramCore/Sources/SyncCore/SyncCore_StandaloneAccountTransaction.swift
+@@ -123,6 +123,7 @@ public let telegramPostboxSeedConfiguration: SeedConfiguration = {
+             if previous.isEmpty {
+                 return
+             }
++            ghostMergeArchivedAttributes(previous: previous, updated: &updated)
+             var audioTranscription: AudioTranscriptionMessageAttribute?
+             for attribute in previous {
+                 if let attribute = attribute as? AudioTranscriptionMessageAttribute {
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
+index 0e26cab4..22bfd43c 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
+@@ -219,11 +219,15 @@ func _internal_toggleForumThreadUnreadMarkInteractively(transaction: Transaction
+             
+             if peer.isForum {
+                 if let inputPeer = apiInputPeer(peer) {
+-                    let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: threadId), readMaxId: messageIndex.id.id)).start()
++                    if !GhostMode.flags.hideReadReceipts {
++                        let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: threadId), readMaxId: messageIndex.id.id)).start()
++                    }
+                 }
+             } else if peer.isMonoForum {
+                 if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(threadId)).flatMap(apiInputPeer) {
+-                    let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
++                    if !GhostMode.flags.hideReadReceipts {
++                        let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
++                    }
+                 }
+             }
+         }
+@@ -255,11 +259,15 @@ func _internal_markForumThreadAsReadInteractively(transaction: Transaction, netw
+         
+         if peer.isForum {
+             if let inputPeer = apiInputPeer(peer) {
+-                let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: threadId), readMaxId: messageIndex.id.id)).start()
++                if !GhostMode.flags.hideReadReceipts {
++                    let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: threadId), readMaxId: messageIndex.id.id)).start()
++                }
+             }
+         } else if peer.isMonoForum {
+             if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(threadId)).flatMap(apiInputPeer) {
+-                let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
++                if !GhostMode.flags.hideReadReceipts {
++                    let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
++                }
+             }
+         }
+     }
+@@ -297,11 +305,15 @@ func _internal_togglePeerUnreadMarkInteractively(transaction: Transaction, netwo
+                 
+                 if peer.isForum {
+                     if let inputPeer = apiInputPeer(peer) {
+-                        let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: item.threadId), readMaxId: messageIndex.id.id)).start()
++                        if !GhostMode.flags.hideReadReceipts {
++                            let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: item.threadId), readMaxId: messageIndex.id.id)).start()
++                        }
+                     }
+                 } else if peer.isMonoForum {
+                     if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(item.threadId)).flatMap(apiInputPeer) {
+-                        let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
++                        if !GhostMode.flags.hideReadReceipts {
++                            let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
++                        }
+                     }
+                 }
+             }
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/AudioFileTranscription.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/AudioFileTranscription.swift
+new file mode 100644
+index 00000000..aeeb9f87
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/AudioFileTranscription.swift
+@@ -0,0 +1,181 @@
++#if os(macOS)
++import Foundation
++import os.log
++import Postbox
++import SwiftSignalKit
++internal import TelegramApi
++
++private let audioFileTranscriptionLog = OSLog(subsystem: "org.telegram.AudioFileTranscription", category: "Core")
++
++public struct AudioFileTranscription: Equatable {
++    public let id: Int64
++    public let text: String
++    public let isPending: Bool
++}
++
++public enum AudioFileTranscriptionError: Error, Equatable {
++    case inputFileInvalid
++    case tooBig
++    case invalidAudio
++    case tooLong
++    case premiumRequired
++    case limitExceeded(Int32)
++    case failed
++    case timedOut
++    case generic
++}
++
++func audioFileTranscriptionError(_ description: String) -> AudioFileTranscriptionError {
++    switch description {
++    case "INPUT_FILE_INVALID": return .inputFileInvalid
++    case "AUDIO_FILE_TOO_BIG": return .tooBig
++    case "AUDIO_FILE_INVALID": return .invalidAudio
++    case "MSG_VOICE_TOO_LONG": return .tooLong
++    case "PREMIUM_ACCOUNT_REQUIRED": return .premiumRequired
++    case "TRANSCRIPTION_FAILED": return .failed
++    default:
++        if description.hasPrefix("FLOOD_WAIT_"), let seconds = Int32(description.dropFirst("FLOOD_WAIT_".count)), seconds >= 0 {
++            return .limitExceeded(seconds)
++        }
++        return .generic
++    }
++}
++
++func validateAudioFileTranscription(data: Data, duration: Double) -> AudioFileTranscriptionError? {
++    guard data.count <= 1024 * 1024 else { return .tooBig }
++    guard duration.isFinite, duration >= 1 else { return .invalidAudio }
++    guard duration <= 1800 else { return .tooLong }
++    guard data.starts(with: [0x4f, 0x67, 0x67, 0x53]) else { return .invalidAudio }
++    return nil
++}
++
++func audioFileTranscriptionsFromUpdates(_ updates: [Api.Update]) -> [AudioFileTranscription] {
++    return updates.compactMap { update in
++        guard case let .updateTranscribedAudioFile(value) = update else { return nil }
++        os_log("pushed update pending=%{public}d characters=%{public}ld", log: audioFileTranscriptionLog, type: .default, value.flags & 1, value.text.utf16.count)
++        return AudioFileTranscription(id: value.transcriptionId, text: value.text, isPending: value.flags & 1 != 0)
++    }
++}
++
++func resolveAudioFileTranscription(request: Signal<AudioFileTranscription, AudioFileTranscriptionError>, updates: Signal<AudioFileTranscription, NoError>) -> Signal<AudioFileTranscription, AudioFileTranscriptionError> {
++    return Signal { subscriber in
++        let queue = Queue(name: "AudioFileTranscription")
++        let cancelled = Atomic(value: false)
++        let requestDisposable = MetaDisposable()
++        let updatesDisposable = MetaDisposable()
++        var transcriptionId: Int64?
++        var earlyUpdates: [Int64: AudioFileTranscription] = [:]
++        var finished = false
++        let emit: (AudioFileTranscription) -> Void = { value in
++            guard !finished, !cancelled.with({ $0 }) else { return }
++            subscriber.putNext(value)
++            if !value.isPending {
++                finished = true
++                subscriber.putCompletion()
++                updatesDisposable.dispose()
++            }
++        }
++        updatesDisposable.set((updates |> deliverOn(queue)).start(next: { value in
++            guard !finished, !cancelled.with({ $0 }) else { return }
++            if let transcriptionId {
++                if value.id == transcriptionId {
++                    emit(value)
++                }
++            } else {
++                if earlyUpdates[value.id]?.isPending == false { return }
++                earlyUpdates[value.id] = value
++            }
++        }))
++        requestDisposable.set((request |> deliverOn(queue)).start(next: { value in
++            guard !finished, !cancelled.with({ $0 }) else { return }
++            transcriptionId = value.id
++            if value.isPending, let updated = earlyUpdates[value.id] {
++                emit(updated)
++            } else {
++                emit(value)
++            }
++            earlyUpdates.removeAll()
++        }, error: { error in
++            guard !finished, !cancelled.with({ $0 }) else { return }
++            finished = true
++            subscriber.putError(error)
++            updatesDisposable.dispose()
++        }))
++        return ActionDisposable {
++            _ = cancelled.swap(true)
++            requestDisposable.dispose()
++            updatesDisposable.dispose()
++        }
++    }
++}
++
++func _internal_transcribeAudioFile(account: Account, data: Data, duration: Double) -> Signal<AudioFileTranscription, AudioFileTranscriptionError> {
++    os_log("request starting bytes=%{public}ld duration=%{public}.3f", log: audioFileTranscriptionLog, type: .default, data.count, duration)
++    if let error = validateAudioFileTranscription(data: data, duration: duration) {
++        return .fail(error)
++    }
++    return multipartUpload(network: account.network, postbox: account.postbox, source: .data(data), encrypt: false, tag: nil, hintFileSize: Int64(data.count), hintFileIsLarge: false, forceNoBigParts: true, useLargerParts: false, useMultiplexedRequests: false)
++    |> mapError { _ in
++        os_log("upload failed", log: audioFileTranscriptionLog, type: .error)
++        return AudioFileTranscriptionError.generic
++    }
++    |> mapToSignal { value -> Signal<AudioFileTranscription, AudioFileTranscriptionError> in
++        switch value {
++        case .progress:
++            return .complete()
++        case let .inputFile(file):
++            os_log("upload complete, calling transcribeAudioFile", log: audioFileTranscriptionLog, type: .default)
++            let request = account.network.request(Api.functions.messages.transcribeAudioFile(file: file), automaticFloodWait: false)
++            |> mapError { error in
++                os_log("RPC error code=%{public}d reason=%{public}@", log: audioFileTranscriptionLog, type: .error, error.errorCode, error.errorDescription)
++                return audioFileTranscriptionError(error.errorDescription)
++            }
++            |> mapToSignal { result -> Signal<AudioFileTranscription, AudioFileTranscriptionError> in
++                guard case let .transcribedAudio(value) = result else { return .fail(.generic) }
++                os_log("RPC response pending=%{public}d characters=%{public}ld", log: audioFileTranscriptionLog, type: .default, value.flags & 1, value.text.utf16.count)
++                return account.postbox.transaction { transaction -> AudioFileTranscription in
++                    _internal_updateAudioTranscriptionTrialState(transaction: transaction) { current in
++                        if let remaining = value.trialRemainsNum, remaining > 0 {
++                            return AudioTranscription.TrialState(remainingCount: remaining)
++                        } else if let until = value.trialRemainsUntilDate {
++                            return AudioTranscription.TrialState(cooldownUntilTime: until, remainingCount: 0)
++                        }
++                        return current.withUpdatedCooldownUntilTime(nil)
++                    }
++                    return AudioFileTranscription(id: value.transcriptionId, text: value.text, isPending: value.flags & 1 != 0)
++                } |> castError(AudioFileTranscriptionError.self)
++            }
++            |> `catch` { error -> Signal<AudioFileTranscription, AudioFileTranscriptionError> in
++                guard case let .limitExceeded(seconds) = error else { return .fail(error) }
++                return account.postbox.transaction { transaction -> Void in
++                    _internal_updateAudioTranscriptionTrialState(transaction: transaction) { _ in
++                        let now = Int64(Date().timeIntervalSince1970)
++                        return AudioTranscription.TrialState(cooldownUntilTime: Int32(clamping: now + Int64(seconds)), remainingCount: 0)
++                    }
++                }
++                |> castError(AudioFileTranscriptionError.self)
++                |> mapToSignal { _ -> Signal<AudioFileTranscription, AudioFileTranscriptionError> in
++                    return .fail(error)
++                }
++            }
++            return resolveAudioFileTranscription(request: request, updates: account.stateManager.audioFileTranscriptionUpdates())
++        case .inputSecretFile:
++            return .fail(.inputFileInvalid)
++        }
++    }
++    |> timeout(120, queue: Queue.concurrentDefaultQueue(), alternate: .fail(.timedOut))
++}
++
++func _internal_getTranscriptionLanguages(account: Account, peerId: EnginePeer.Id?) -> Signal<[String], NoError> {
++    if peerId?.namespace == Namespaces.Peer.SecretChat { return .single([]) }
++    return account.postbox.transaction { transaction -> Api.InputPeer? in
++        return peerId.flatMap { transaction.getPeer($0).flatMap(apiInputPeer) }
++    }
++    |> mapToSignal { peer -> Signal<[String], NoError> in
++        return account.network.request(Api.functions.messages.getTranscriptionLangs(flags: peer == nil ? 0 : 1, peer: peer), automaticFloodWait: false)
++        |> map { Array($0.filter { !$0.isEmpty }.prefix(3)) }
++        |> `catch` { _ in .single([]) }
++    }
++    |> timeout(2, queue: Queue.concurrentDefaultQueue(), alternate: .single([]))
++}
++#endif
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ReplyThreadHistory.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ReplyThreadHistory.swift
+index 04945389..adffa96a 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ReplyThreadHistory.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ReplyThreadHistory.swift
+@@ -388,6 +388,10 @@ private class ReplyThreadHistoryContextImpl {
+                 }
+             }
+ 
++            if GhostMode.flags.hideReadReceipts {
++                return
++            }
++
+             if let subPeerId {
+                 let signal = strongSelf.account.network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeerId, maxId: messageIndex.id.id))
+                 |> `catch` { _ -> Signal<Api.Bool, NoError> in
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/Stories.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/Stories.swift
+index e74f2074..e904303f 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/Stories.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/Stories.swift
+@@ -2123,6 +2123,10 @@ func _internal_markStoryAsSeen(account: Account, peerId: PeerId, id: Int32, asPi
+             }
+             #endif
+             
++            if GhostMode.flags.hideStoryViews {
++                return .complete()
++            }
++
+             return account.network.request(Api.functions.stories.incrementStoryViews(peer: inputPeer, id: [id]))
+             |> `catch` { _ -> Signal<Api.Bool, NoError> in
+                 return .single(.boolFalse)
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+index 21020ed0..52723ff4 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+@@ -879,6 +879,16 @@ public extension TelegramEngine {
+             return _internal_summarizeMessage(account: self.account, messageId: messageId, translateToLang: translateToLang)
+         }
+         
++        #if os(macOS)
++        public func transcribeAudioFile(data: Data, duration: Double) -> Signal<AudioFileTranscription, AudioFileTranscriptionError> {
++            return _internal_transcribeAudioFile(account: self.account, data: data, duration: duration)
++        }
++
++        public func getTranscriptionLanguages(peerId: EnginePeer.Id? = nil) -> Signal<[String], NoError> {
++            return _internal_getTranscriptionLanguages(account: self.account, peerId: peerId)
++        }
++        #endif
++
+         public func transcribeAudio(messageId: MessageId) -> Signal<EngineAudioTranscriptionResult, NoError> {
+             return _internal_transcribeAudio(postbox: self.account.postbox, network: self.account.network, messageId: messageId)
+         }
+diff --git a/submodules/TelegramCore/Tests/AudioFileTranscriptionTests.swift b/submodules/TelegramCore/Tests/AudioFileTranscriptionTests.swift
+new file mode 100644
+index 00000000..ae1032d2
+--- /dev/null
++++ b/submodules/TelegramCore/Tests/AudioFileTranscriptionTests.swift
+@@ -0,0 +1,100 @@
++#if os(macOS)
++import XCTest
++import SwiftSignalKit
++import TelegramApi
++@testable import TelegramCore
++
++final class AudioFileTranscriptionTests: XCTestCase {
++    func testUploadLimitsAndDurationBoundaries() {
++        let ogg = Data([0x4f, 0x67, 0x67, 0x53])
++        XCTAssertNil(validateAudioFileTranscription(data: ogg, duration: 1))
++        XCTAssertNil(validateAudioFileTranscription(data: ogg, duration: 1800))
++        XCTAssertEqual(validateAudioFileTranscription(data: ogg, duration: 0.99), .invalidAudio)
++        XCTAssertEqual(validateAudioFileTranscription(data: ogg, duration: .nan), .invalidAudio)
++        XCTAssertEqual(validateAudioFileTranscription(data: ogg, duration: .infinity), .invalidAudio)
++        XCTAssertEqual(validateAudioFileTranscription(data: ogg, duration: 1800.01), .tooLong)
++        XCTAssertEqual(validateAudioFileTranscription(data: Data(), duration: 3), .invalidAudio)
++        var maximum = ogg
++        maximum.append(Data(count: 1024 * 1024 - 4))
++        XCTAssertNil(validateAudioFileTranscription(data: maximum, duration: 3))
++        maximum.append(0)
++        XCTAssertEqual(validateAudioFileTranscription(data: maximum, duration: 3), .tooBig)
++    }
++
++    func testErrorsPreserveServerGates() {
++        let values: [(String, AudioFileTranscriptionError)] = [
++            ("INPUT_FILE_INVALID", .inputFileInvalid), ("AUDIO_FILE_TOO_BIG", .tooBig),
++            ("AUDIO_FILE_INVALID", .invalidAudio), ("MSG_VOICE_TOO_LONG", .tooLong),
++            ("PREMIUM_ACCOUNT_REQUIRED", .premiumRequired), ("FLOOD_WAIT_60", .limitExceeded(60)),
++            ("TRANSCRIPTION_FAILED", .failed), ("FLOOD_WAIT_bad", .generic), ("OTHER", .generic)
++        ]
++        for (description, expected) in values { XCTAssertEqual(audioFileTranscriptionError(description), expected) }
++    }
++
++    func testUpdateConstructorUsesTranscriptionIdAndPendingFlag() {
++        let updates: [Api.Update] = [
++            .updateTranscribedAudioFile(.init(flags: 1, transcriptionId: 41, text: "partial")),
++            .updateTranscribedAudioFile(.init(flags: 0, transcriptionId: 42, text: "final"))
++        ]
++        XCTAssertEqual(audioFileTranscriptionsFromUpdates(updates), [
++            AudioFileTranscription(id: 41, text: "partial", isPending: true),
++            AudioFileTranscription(id: 42, text: "final", isPending: false)
++        ])
++    }
++
++    func testImmediateCachedResponseCompletes() {
++        let done = expectation(description: "done")
++        let value = AudioFileTranscription(id: 1, text: "cached", isPending: false)
++        var received: [AudioFileTranscription] = []
++        let disposable = resolveAudioFileTranscription(request: .single(value), updates: .never()).start(next: { received.append($0) }, completed: { done.fulfill() })
++        wait(for: [done], timeout: 3)
++        XCTAssertEqual(received, [value])
++        disposable.dispose()
++    }
++
++    func testPendingIgnoresOtherIdsAndCompletesOnMatchingFinal() {
++        let pending = expectation(description: "pending")
++        let done = expectation(description: "done")
++        let updates = ValuePipe<AudioFileTranscription>()
++        var received: [AudioFileTranscription] = []
++        let disposable = resolveAudioFileTranscription(request: .single(.init(id: 9, text: "", isPending: true)), updates: updates.signal()).start(next: { value in
++            received.append(value)
++            if value.isPending { pending.fulfill() }
++        }, completed: { done.fulfill() })
++        wait(for: [pending], timeout: 3)
++        updates.putNext(.init(id: 8, text: "wrong", isPending: false))
++        updates.putNext(.init(id: 9, text: "right", isPending: false))
++        wait(for: [done], timeout: 3)
++        XCTAssertEqual(received.map(\.text), ["", "right"])
++        disposable.dispose()
++    }
++
++    func testFinalUpdateBeforeResponseCannotBeLostOrRegressed() {
++        let request = ValuePipe<AudioFileTranscription>()
++        let updates = ValuePipe<AudioFileTranscription>()
++        let done = expectation(description: "done")
++        var received: [AudioFileTranscription] = []
++        let disposable = resolveAudioFileTranscription(request: request.signal() |> castError(AudioFileTranscriptionError.self), updates: updates.signal()).start(next: { received.append($0) }, completed: { done.fulfill() })
++        updates.putNext(.init(id: 4, text: "final", isPending: false))
++        updates.putNext(.init(id: 4, text: "older partial", isPending: true))
++        request.putNext(.init(id: 4, text: "", isPending: true))
++        wait(for: [done], timeout: 3)
++        XCTAssertEqual(received, [.init(id: 4, text: "final", isPending: false)])
++        disposable.dispose()
++    }
++
++    func testCancellationDisposesRequestAndUpdateSubscriptions() {
++        let requestDisposed = expectation(description: "request disposed")
++        let updatesDisposed = expectation(description: "updates disposed")
++        let request = Signal<AudioFileTranscription, AudioFileTranscriptionError> { _ in
++            return ActionDisposable { requestDisposed.fulfill() }
++        }
++        let updates = Signal<AudioFileTranscription, NoError> { _ in
++            return ActionDisposable { updatesDisposed.fulfill() }
++        }
++        let disposable = resolveAudioFileTranscription(request: request, updates: updates).start()
++        disposable.dispose()
++        wait(for: [requestDisposed, updatesDisposed], timeout: 3)
++    }
++}
++#endif
+diff --git a/submodules/TelegramVoip/Package.swift b/submodules/TelegramVoip/Package.swift
+index 4ecef069..55bee598 100644
+--- a/submodules/TelegramVoip/Package.swift
++++ b/submodules/TelegramVoip/Package.swift
+@@ -16,6 +16,8 @@ let package = Package(
+         // Dependencies declare other packages that this package depends on.
+         // .package(url: /* package url */, from: "1.0.0"),
+         .package(name: "TgVoipWebrtc", path: "../../../tgcalls"),
++        .package(name: "HLSPlayback", path: "../../../../packages/HLSPlayback"),
++        .package(name: "BroadcastPlayback", path: "../../../../packages/BroadcastPlayback"),
+         .package(name: "SSignalKit", path: "../SSignalKit"),
+         .package(name: "FFMpegBinding", path: "../FFMpegBinding"),
+         .package(name: "TelegramCore", path: "../TelegramCore")
+@@ -28,6 +30,8 @@ let package = Package(
+             name: "TelegramVoip",
+             dependencies: [
+                 .product(name: "TgVoipWebrtc", package: "TgVoipWebrtc", condition: nil),
++                .product(name: "HLSPlayback", package: "HLSPlayback"),
++                .product(name: "BroadcastPlayback", package: "BroadcastPlayback"),
+                 .product(name: "SwiftSignalKit", package: "SSignalKit", condition: nil),
+                 .product(name: "FFMpegBinding", package: "FFMpegBinding", condition: nil),
+                 .product(name: "TelegramCore", package: "TelegramCore", condition: nil),
+diff --git a/submodules/TelegramVoip/Sources/BroadcastPartSlice.swift b/submodules/TelegramVoip/Sources/BroadcastPartSlice.swift
+new file mode 100644
+index 00000000..65e1d65e
+--- /dev/null
++++ b/submodules/TelegramVoip/Sources/BroadcastPartSlice.swift
+@@ -0,0 +1,30 @@
++#if os(macOS)
++import Foundation
++import TgVoipWebrtc
++import TelegramCore
++import HLSPlayback
++
++public func broadcastPartSlice(_ data: Data) -> Data? {
++    var info = BroadcastPartHeaderInfo()
++    let parsed = data.withUnsafeBytes { raw -> Bool in
++        guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
++            return false
++        }
++        return BroadcastPartHeaderParse(base, raw.count, &info)
++    }
++    guard parsed, info.sliceOffset <= data.count, info.sliceOffset + info.sliceSize <= data.count else {
++        return nil
++    }
++    let start = data.startIndex + info.sliceOffset
++    return data.subdata(in: start ..< start + info.sliceSize)
++}
++
++public func broadcastNetworkClass(_ networkType: NetworkType) -> HLSNetworkClass {
++    switch networkType {
++    case .none:
++        return HLSNetworkClass("none")
++    case .wifi:
++        return HLSNetworkClass("wifi")
++    }
++}
++#endif
+diff --git a/submodules/TelegramVoip/Sources/GroupCallBroadcastFetcher.swift b/submodules/TelegramVoip/Sources/GroupCallBroadcastFetcher.swift
+new file mode 100644
+index 00000000..01220652
+--- /dev/null
++++ b/submodules/TelegramVoip/Sources/GroupCallBroadcastFetcher.swift
+@@ -0,0 +1,95 @@
++#if os(macOS)
++import Foundation
++import SwiftSignalKit
++import TgVoipWebrtc
++import TelegramCore
++import BroadcastPlayback
++
++public final class GroupCallBroadcastFetcher {
++    private let source: BroadcastPartSource
++
++    init(source: BroadcastPartSource) {
++        self.source = source
++    }
++
++    public convenience init(queue: Queue, audioStreamData: OngoingGroupCallContext.AudioStreamData) {
++        self.init(source: NetworkBroadcastPartSource(queue: queue, engine: audioStreamData.engine, callId: audioStreamData.callId, accessHash: audioStreamData.accessHash, isExternalStream: audioStreamData.isExternalStream))
++    }
++
++    public func edge(completion: @escaping (BroadcastEdgeOutcome) -> Void) -> Disposable {
++        return self.source.requestTime(completion: { timestampMs in
++            if timestampMs > 0 {
++                completion(.edge(reportedMs: timestampMs))
++            } else {
++                completion(.failed)
++            }
++        })
++    }
++
++    public func load(_ request: BroadcastPartRequest, completion: @escaping (BroadcastPartOutcome, Data?) -> Void) -> Disposable {
++        let subject: BroadcastPartSubject
++        switch request.kind {
++        case .audio:
++            subject = .audio
++        case let .video(channelId, quality):
++            subject = .video(channelId: channelId, quality: GroupCallBroadcastFetcher.quality(quality))
++        case let .unified(quality):
++            subject = .video(channelId: 1, quality: GroupCallBroadcastFetcher.quality(quality))
++        }
++        return self.source.requestPart(timestampMilliseconds: request.timestampMs, durationMilliseconds: BroadcastLivePosition.partDurationMs, subject: subject, completion: { part in
++            switch part.status {
++            case .success:
++                let data = part.oggData
++                completion(.data(bytes: Int64(data.count), responseTimestamp: part.responseTimestamp, info: GroupCallBroadcastFetcher.info(for: request, data: data)), data)
++            case .notReady:
++                completion(.notReady, nil)
++            case .resyncNeeded:
++                completion(.resyncNeeded(responseTimestamp: part.responseTimestamp), nil)
++            @unknown default:
++                completion(.notReady, nil)
++            }
++        }, rejoinNeeded: {
++            completion(.rejoinNeeded, nil)
++        })
++    }
++
++    private static func quality(_ quality: BroadcastQuality) -> OngoingGroupCallContext.VideoChannel.Quality {
++        switch quality {
++        case .thumbnail:
++            return .thumbnail
++        case .medium:
++            return .medium
++        case .full:
++            return .full
++        }
++    }
++
++    public static func info(for request: BroadcastPartRequest, data: Data) -> BroadcastPartInfo {
++        guard case .audio = request.kind, !data.isEmpty else {
++            return BroadcastPartInfo()
++        }
++        var info = BroadcastListenerAudioInfo()
++        let parsed = data.withUnsafeBytes { raw -> Bool in
++            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
++                return false
++            }
++            return BroadcastListenerAudioReadInfo(base, raw.count, &info)
++        }
++        guard parsed else {
++            return BroadcastPartInfo()
++        }
++        var channels: [String: Int32] = [:]
++        withUnsafeBytes(of: &info.endpoints) { raw in
++            let endpoints = raw.bindMemory(to: BroadcastListenerAudioEndpoint.self)
++            for index in 0 ..< min(info.endpointCount, endpoints.count) {
++                var endpoint = endpoints[index]
++                let name = withUnsafeBytes(of: &endpoint.endpointId) { bytes -> String in
++                    return String(cString: bytes.bindMemory(to: CChar.self).baseAddress!)
++                }
++                channels[name] = endpoint.channelId
++            }
++        }
++        return BroadcastPartInfo(videoChannels: channels, audioDurationMs: Int(info.durationMs))
++    }
++}
++#endif
+diff --git a/submodules/TelegramVoip/Sources/GroupCallBroadcastLevels.swift b/submodules/TelegramVoip/Sources/GroupCallBroadcastLevels.swift
+new file mode 100644
+index 00000000..0080b226
+--- /dev/null
++++ b/submodules/TelegramVoip/Sources/GroupCallBroadcastLevels.swift
+@@ -0,0 +1,32 @@
++#if os(macOS)
++import Foundation
++import BroadcastPlayback
++
++public struct GroupCallBroadcastLevels {
++    private var pending: [UInt32: (level: Float, voice: Bool)] = [:]
++
++    public init() {
++    }
++
++    public mutating func add(_ samples: [BroadcastAudioLevelSample]) {
++        for sample in samples {
++            if let current = self.pending[sample.ssrc] {
++                self.pending[sample.ssrc] = (max(current.level, sample.level), current.voice || sample.voice)
++            } else {
++                self.pending[sample.ssrc] = (sample.level, sample.voice)
++            }
++        }
++    }
++
++    public mutating func merged(into engineLevels: [(OngoingGroupCallContext.AudioLevelKey, Float, Bool)]) -> [(OngoingGroupCallContext.AudioLevelKey, Float, Bool)] {
++        var result = engineLevels
++        for ssrc in self.pending.keys.sorted() {
++            if let value = self.pending[ssrc] {
++                result.append((.source(ssrc), value.level, value.voice))
++            }
++        }
++        self.pending.removeAll()
++        return result
++    }
++}
++#endif
+diff --git a/submodules/TelegramVoip/Sources/GroupCallBroadcastPlatform.swift b/submodules/TelegramVoip/Sources/GroupCallBroadcastPlatform.swift
+new file mode 100644
+index 00000000..f71b7708
+--- /dev/null
++++ b/submodules/TelegramVoip/Sources/GroupCallBroadcastPlatform.swift
+@@ -0,0 +1,190 @@
++#if os(macOS)
++import Foundation
++import QuartzCore
++import SwiftSignalKit
++import TgVoipWebrtc
++import BroadcastPlayback
++
++public final class GroupCallBroadcastPlatform: BroadcastListenerPlatform {
++    private final class Token: BroadcastCancellable {
++        var cancelled = false
++        var disposable: Disposable?
++
++        func cancel() {
++            self.cancelled = true
++            self.disposable?.dispose()
++            self.disposable = nil
++        }
++    }
++
++    private let queue: Queue
++    private let audioCore: OpaquePointer
++    private let fetcher: () -> GroupCallBroadcastFetcher?
++    private let videoOutput: GroupCallBroadcastVideoOutput
++    private let rejoinNeeded: () -> Void
++    private let decodeQueue: DispatchQueue
++    private let enqueue: (BroadcastListenerAudioPartRef, Int64) -> Bool
++    private var isClosed = false
++
++    public init(queue: Queue, audioCore: OpaquePointer, fetcher: @escaping () -> GroupCallBroadcastFetcher?, videoOutput: GroupCallBroadcastVideoOutput, rejoinNeeded: @escaping () -> Void, decodeQueue: DispatchQueue = DispatchQueue(label: "GroupCallBroadcast.audio-decode"), enqueue: ((BroadcastListenerAudioPartRef, Int64) -> Bool)? = nil) {
++        self.queue = queue
++        self.audioCore = audioCore
++        self.fetcher = fetcher
++        self.videoOutput = videoOutput
++        self.rejoinNeeded = rejoinNeeded
++        self.decodeQueue = decodeQueue
++        if let enqueue {
++            self.enqueue = enqueue
++        } else {
++            self.enqueue = { part, timestampMs in
++                return BroadcastListenerAudioPartEnqueue(part, audioCore, timestampMs)
++            }
++        }
++    }
++
++    public func close() {
++        self.isClosed = true
++    }
++
++    public var now: Double {
++        return BroadcastAudioCoreNow(self.audioCore)
++    }
++
++    public func schedule(after delay: Double, _ action: @escaping () -> Void) -> BroadcastCancellable {
++        let token = Token()
++        self.queue.after(max(0.0, delay), { [weak self] in
++            guard let self, !self.isClosed, !token.cancelled else {
++                return
++            }
++            action()
++        })
++        return token
++    }
++
++    private func onQueue(_ token: Token, _ f: @escaping () -> Void) {
++        let deliver: () -> Void = { [weak self] in
++            guard let self, !self.isClosed, !token.cancelled else {
++                return
++            }
++            f()
++        }
++        if self.queue.isCurrent() {
++            deliver()
++        } else {
++            self.queue.async(deliver)
++        }
++    }
++
++    public func requestLiveEdge(completion: @escaping (BroadcastEdgeOutcome) -> Void) -> BroadcastCancellable {
++        let token = Token()
++        guard let fetcher = self.fetcher() else {
++            completion(.failed)
++            return token
++        }
++        token.disposable = fetcher.edge(completion: { [weak self] outcome in
++            self?.onQueue(token, {
++                completion(outcome)
++            })
++        })
++        return token
++    }
++
++    public func loadPart(_ request: BroadcastPartRequest, completion: @escaping (BroadcastPartOutcome, Data?) -> Void) -> BroadcastCancellable {
++        let token = Token()
++        guard let fetcher = self.fetcher() else {
++            completion(.notReady, nil)
++            return token
++        }
++        token.disposable = fetcher.load(request, completion: { [weak self] outcome, data in
++            self?.onQueue(token, {
++                completion(outcome, data)
++            })
++        })
++        return token
++    }
++
++    public func handOverAudio(segmentTimestampMs: Int64, data: Data, gate: BroadcastAudioHandover.Gate) {
++        let queue = self.queue
++        let enqueue = self.enqueue
++        self.decodeQueue.async { [weak self] in
++            let part = data.withUnsafeBytes { raw -> BroadcastListenerAudioPartRef? in
++                guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
++                    return nil
++                }
++                return BroadcastListenerAudioDecode(base, raw.count)
++            }
++            guard let part else {
++                return
++            }
++            queue.async {
++                if let self, !self.isClosed, !gate.isClosed {
++                    let _ = enqueue(part, segmentTimestampMs)
++                }
++                BroadcastListenerAudioPartRelease(part)
++            }
++        }
++    }
++
++    public func playAudio(segmentTimestampMs: Int64, at hostTime: Double, offsetMs: Int) {
++        if self.isClosed {
++            return
++        }
++        let _ = BroadcastAudioCorePlay(self.audioCore, segmentTimestampMs, hostTime, Int32(offsetMs))
++    }
++
++    public func setAudioActive(_ isActive: Bool) {
++        if self.isClosed {
++            return
++        }
++        BroadcastAudioCoreSetActive(self.audioCore, isActive)
++    }
++
++    public func setAudioVolume(ssrc: UInt32, volume: Float) {
++        if self.isClosed {
++            return
++        }
++        BroadcastAudioCoreSetVolume(self.audioCore, ssrc, volume)
++    }
++
++    public func resetAudio() {
++        if self.isClosed {
++            return
++        }
++        BroadcastAudioCoreReset(self.audioCore)
++    }
++
++    public func takeAudioLevels() -> [BroadcastAudioLevelSample] {
++        if self.isClosed {
++            return []
++        }
++        var levels = [BroadcastAudioLevel](repeating: BroadcastAudioLevel(), count: 64)
++        let count = BroadcastAudioCoreTakeLevels(self.audioCore, &levels, levels.count)
++        return levels.prefix(count).map { BroadcastAudioLevelSample(ssrc: $0.ssrc, level: $0.level, voice: $0.voice) }
++    }
++
++    public func deliverVideo(_ segment: BroadcastSegment, data: [BroadcastPartRequest: Data]) {
++        if self.isClosed {
++            return
++        }
++        self.videoOutput.deliver(segment, data: data)
++    }
++
++    public func playVideo(segmentTimestampMs: Int64, at hostTime: Double, offsetMs: Int) {
++        if self.isClosed {
++            return
++        }
++        self.videoOutput.play(segmentTimestampMs: segmentTimestampMs, hostTime: hostTime, offsetMs: offsetMs)
++    }
++
++    public func stopVideo() {
++        self.videoOutput.stop()
++    }
++
++    public func requestRejoin() {
++        if self.isClosed {
++            return
++        }
++        self.rejoinNeeded()
++    }
++}
++#endif
+diff --git a/submodules/TelegramVoip/Sources/GroupCallBroadcastVideoOutput.swift b/submodules/TelegramVoip/Sources/GroupCallBroadcastVideoOutput.swift
+new file mode 100644
+index 00000000..314d5d50
+--- /dev/null
++++ b/submodules/TelegramVoip/Sources/GroupCallBroadcastVideoOutput.swift
+@@ -0,0 +1,188 @@
++#if os(macOS)
++import Foundation
++import QuartzCore
++import SwiftSignalKit
++import TgVoipWebrtc
++import BroadcastPlayback
++
++public final class GroupCallBroadcastVideoOutput {
++    private final class Endpoint {
++        let id: String
++        let queue: DispatchQueue
++        let decoder: BroadcastVideoDecoderRef
++        let frames: ValuePipe<OngoingGroupCallContext.VideoFrameData>
++        var parts: [Int64: BroadcastVideoPartRef] = [:]
++        var playhead: BroadcastPlayhead
++        var shown: (timestampMs: Int64, index: Int32)?
++        var timer: DispatchSourceTimer?
++        var lastDeliveredMs: Int64 = Int64.min
++
++        init(id: String, playhead: BroadcastPlayhead, frames: ValuePipe<OngoingGroupCallContext.VideoFrameData>) {
++            self.id = id
++            self.playhead = playhead
++            self.frames = frames
++            self.queue = DispatchQueue(label: "GroupCallBroadcastVideo.\(id)")
++            self.decoder = BroadcastVideoDecoderCreate(true)
++        }
++    }
++
++    private var endpoints: [String: Endpoint] = [:]
++    private var playhead = BroadcastPlayhead()
++    private let pipes = Atomic<[String: ValuePipe<OngoingGroupCallContext.VideoFrameData>]>(value: [:])
++
++    public init() {
++    }
++
++    var endpointIds: [String] {
++        return self.endpoints.keys.sorted()
++    }
++
++    public func video(endpointId: String) -> Signal<OngoingGroupCallContext.VideoFrameData, NoError> {
++        return self.pipe(endpointId).signal()
++    }
++
++    public func deliver(_ segment: BroadcastSegment, data: [BroadcastPartRequest: Data]) {
++        for (endpointId, request) in segment.video {
++            guard let bytes = data[request] else {
++                continue
++            }
++            let endpoint = self.endpoint(endpointId)
++            let timestampMs = segment.timestampMs
++            endpoint.lastDeliveredMs = max(endpoint.lastDeliveredMs, timestampMs)
++            endpoint.queue.async {
++                let part = bytes.withUnsafeBytes { raw -> BroadcastVideoPartRef? in
++                    guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
++                        return nil
++                    }
++                    return BroadcastVideoPartOpen(endpoint.decoder, base, raw.count)
++                }
++                if let previous = endpoint.parts[timestampMs] {
++                    BroadcastVideoPartRelease(previous)
++                }
++                endpoint.parts[timestampMs] = part
++            }
++        }
++    }
++
++    public func play(segmentTimestampMs: Int64, hostTime: Double, offsetMs: Int) {
++        let play = BroadcastPlayhead.Play(timestampMs: segmentTimestampMs, hostTime: hostTime, offsetMs: offsetMs)
++        self.playhead.add(play)
++        let playing = self.playhead.active(at: CACurrentMediaTime())
++        for endpoint in self.endpoints.values {
++            if let playing, endpoint.lastDeliveredMs < playing.timestampMs {
++                self.retire(endpoint)
++                continue
++            }
++            endpoint.queue.async {
++                endpoint.playhead.add(play)
++            }
++        }
++    }
++
++    private func retire(_ endpoint: Endpoint) {
++        self.endpoints.removeValue(forKey: endpoint.id)
++        endpoint.queue.async {
++            endpoint.timer?.cancel()
++            endpoint.timer = nil
++            for part in endpoint.parts.values {
++                BroadcastVideoPartRelease(part)
++            }
++            endpoint.parts.removeAll()
++            BroadcastVideoDecoderRelease(endpoint.decoder)
++        }
++    }
++
++    public func stop() {
++        for endpoint in self.endpoints.values {
++            endpoint.queue.sync {
++                endpoint.timer?.cancel()
++                endpoint.timer = nil
++                for part in endpoint.parts.values {
++                    BroadcastVideoPartRelease(part)
++                }
++                endpoint.parts.removeAll()
++                endpoint.playhead = BroadcastPlayhead()
++            }
++            BroadcastVideoDecoderRelease(endpoint.decoder)
++        }
++        self.endpoints.removeAll()
++        self.playhead = BroadcastPlayhead()
++    }
++
++    private func pipe(_ endpointId: String) -> ValuePipe<OngoingGroupCallContext.VideoFrameData> {
++        return self.pipes.modify { pipes in
++            var pipes = pipes
++            if pipes[endpointId] == nil {
++                pipes[endpointId] = ValuePipe()
++            }
++            return pipes
++        }[endpointId]!
++    }
++
++    private func endpoint(_ id: String) -> Endpoint {
++        if let endpoint = self.endpoints[id] {
++            return endpoint
++        }
++        let endpoint = Endpoint(id: id, playhead: self.playhead, frames: self.pipe(id))
++        self.endpoints[id] = endpoint
++        let timer = DispatchSource.makeTimerSource(queue: endpoint.queue)
++        timer.schedule(deadline: .now(), repeating: .milliseconds(16), leeway: .milliseconds(1))
++        timer.setEventHandler { [weak endpoint] in
++            guard let endpoint else {
++                return
++            }
++            GroupCallBroadcastVideoOutput.show(endpoint)
++        }
++        endpoint.timer = timer
++        timer.resume()
++        return endpoint
++    }
++
++    private static func show(_ endpoint: Endpoint) {
++        let now = CACurrentMediaTime()
++        guard let playing = endpoint.playhead.active(at: now) else {
++            return
++        }
++        for (timestampMs, part) in endpoint.parts where timestampMs < playing.timestampMs {
++            BroadcastVideoPartRelease(part)
++            endpoint.parts.removeValue(forKey: timestampMs)
++        }
++        guard let part = endpoint.parts[playing.timestampMs] else {
++            return
++        }
++        var frame = BroadcastVideoFrame()
++        guard BroadcastVideoPartFrameAt(part, playing.secondsIntoSegment(at: now), &frame) else {
++            return
++        }
++        if let shown = endpoint.shown, shown.timestampMs == playing.timestampMs, shown.index == frame.index {
++            return
++        }
++        endpoint.shown = (playing.timestampMs, frame.index)
++        if let frameData = GroupCallBroadcastVideoOutput.frameData(frame) {
++            endpoint.frames.putNext(frameData)
++        }
++    }
++
++    private static func frameData(_ frame: BroadcastVideoFrame) -> OngoingGroupCallContext.VideoFrameData? {
++        if let pixelBuffer = frame.pixelBuffer?.takeUnretainedValue() {
++            return OngoingGroupCallContext.VideoFrameData(pixelBuffer: pixelBuffer, rotation: frame.rotation)
++        }
++        guard let y = frame.y, let u = frame.u, let v = frame.v, frame.width > 0, frame.height > 0 else {
++            return nil
++        }
++        let height = Int(frame.height)
++        let chromaHeight = (height + 1) / 2
++        return OngoingGroupCallContext.VideoFrameData(
++            i420Width: Int(frame.width),
++            height: height,
++            y: Data(bytes: y, count: Int(frame.strideY) * height),
++            strideY: Int(frame.strideY),
++            u: Data(bytes: u, count: Int(frame.strideU) * chromaHeight),
++            strideU: Int(frame.strideU),
++            v: Data(bytes: v, count: Int(frame.strideV) * chromaHeight),
++            strideV: Int(frame.strideV),
++            rotation: frame.rotation
++        )
++    }
++}
++#endif
+diff --git a/submodules/TelegramVoip/Sources/GroupCallContext.swift b/submodules/TelegramVoip/Sources/GroupCallContext.swift
+index 87c742a8..1dddaa3b 100644
+--- a/submodules/TelegramVoip/Sources/GroupCallContext.swift
++++ b/submodules/TelegramVoip/Sources/GroupCallContext.swift
+@@ -2,6 +2,9 @@ import Foundation
+ import SwiftSignalKit
+ import TgVoipWebrtc
+ import TelegramCore
++#if os(macOS)
++import BroadcastPlayback
++#endif
+ import CoreMedia
+ 
+ #if os(macOS)
+@@ -124,7 +127,7 @@ final class NetworkBroadcastPartSource: BroadcastPartSource {
+                 }
+             })
+         } else {
+-            return self.engine.calls.serverTime().start(next: { result in
++            return (self.engine.calls.serverTime() |> deliverOn(self.queue)).start(next: { result in
+                 completion(result)
+             })
+         }
+@@ -369,42 +372,102 @@ public final class OngoingGroupCallContext {
+         }
+ 
+         public final class I420Buffer {
+-            private let wrapped: CallVideoFrameI420Buffer
++            private struct Planes {
++                let width: Int
++                let height: Int
++                let y: Data
++                let strideY: Int
++                let u: Data
++                let strideU: Int
++                let v: Data
++                let strideV: Int
++            }
++
++            private enum Storage {
++                case wrapped(CallVideoFrameI420Buffer)
++                case planes(Planes)
++            }
++
++            private let storage: Storage
+ 
+             public var width: Int {
+-                return Int(self.wrapped.width)
++                switch self.storage {
++                case let .wrapped(wrapped):
++                    return Int(wrapped.width)
++                case let .planes(planes):
++                    return planes.width
++                }
+             }
+ 
+             public var height: Int {
+-                return Int(self.wrapped.height)
++                switch self.storage {
++                case let .wrapped(wrapped):
++                    return Int(wrapped.height)
++                case let .planes(planes):
++                    return planes.height
++                }
+             }
+ 
+             public var y: Data {
+-                return self.wrapped.y
++                switch self.storage {
++                case let .wrapped(wrapped):
++                    return wrapped.y
++                case let .planes(planes):
++                    return planes.y
++                }
+             }
+ 
+             public var strideY: Int {
+-                return Int(self.wrapped.strideY)
++                switch self.storage {
++                case let .wrapped(wrapped):
++                    return Int(wrapped.strideY)
++                case let .planes(planes):
++                    return planes.strideY
++                }
+             }
+ 
+             public var u: Data {
+-                return self.wrapped.u
++                switch self.storage {
++                case let .wrapped(wrapped):
++                    return wrapped.u
++                case let .planes(planes):
++                    return planes.u
++                }
+             }
+ 
+             public var strideU: Int {
+-                return Int(self.wrapped.strideU)
++                switch self.storage {
++                case let .wrapped(wrapped):
++                    return Int(wrapped.strideU)
++                case let .planes(planes):
++                    return planes.strideU
++                }
+             }
+ 
+             public var v: Data {
+-                return self.wrapped.v
++                switch self.storage {
++                case let .wrapped(wrapped):
++                    return wrapped.v
++                case let .planes(planes):
++                    return planes.v
++                }
+             }
+ 
+             public var strideV: Int {
+-                return Int(self.wrapped.strideV)
++                switch self.storage {
++                case let .wrapped(wrapped):
++                    return Int(wrapped.strideV)
++                case let .planes(planes):
++                    return planes.strideV
++                }
+             }
+ 
+             init(wrapped: CallVideoFrameI420Buffer) {
+-                self.wrapped = wrapped
++                self.storage = .wrapped(wrapped)
++            }
++
++            init(width: Int, height: Int, y: Data, strideY: Int, u: Data, strideU: Int, v: Data, strideV: Int) {
++                self.storage = .planes(Planes(width: width, height: height, y: y, strideY: strideY, u: u, strideU: strideU, v: v, strideV: strideV))
+             }
+         }
+ 
+@@ -452,6 +515,41 @@ public final class OngoingGroupCallContext {
+             self.mirrorHorizontally = frameData.mirrorHorizontally
+             self.mirrorVertically = frameData.mirrorVertically
+         }
++
++        public init(pixelBuffer: CVPixelBuffer, rotation: Int32) {
++            let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
++            if pixelFormat == kCVPixelFormatType_32ARGB {
++                self.buffer = .argb(NativeBuffer(pixelBuffer: pixelBuffer))
++            } else if pixelFormat == kCVPixelFormatType_32BGRA {
++                self.buffer = .bgra(NativeBuffer(pixelBuffer: pixelBuffer))
++            } else {
++                self.buffer = .native(NativeBuffer(pixelBuffer: pixelBuffer))
++            }
++            self.width = CVPixelBufferGetWidth(pixelBuffer)
++            self.height = CVPixelBufferGetHeight(pixelBuffer)
++            self.orientation = Self.orientation(rotation: rotation)
++            self.deviceRelativeOrientation = nil
++            self.mirrorHorizontally = false
++            self.mirrorVertically = false
++        }
++
++        public init(i420Width width: Int, height: Int, y: Data, strideY: Int, u: Data, strideU: Int, v: Data, strideV: Int, rotation: Int32) {
++            self.buffer = .i420(I420Buffer(width: width, height: height, y: y, strideY: strideY, u: u, strideU: strideU, v: v, strideV: strideV))
++            self.width = width
++            self.height = height
++            self.orientation = Self.orientation(rotation: rotation)
++            self.deviceRelativeOrientation = nil
++            self.mirrorHorizontally = false
++            self.mirrorVertically = false
++        }
++        private static func orientation(rotation: Int32) -> OngoingCallVideoOrientation {
++            switch rotation {
++            case 90: return .rotation90
++            case 180: return .rotation180
++            case 270: return .rotation270
++            default: return .rotation0
++            }
++        }
+     }
+ 
+     public struct Stats {
+@@ -482,6 +580,16 @@ public final class OngoingGroupCallContext {
+         let audioDevice: OngoingCallContext.AudioDevice?
+ #endif
+         
++#if os(macOS)
++        private var listenerSession: BroadcastListenerSession?
++        private var listenerPlatform: GroupCallBroadcastPlatform?
++        private var listenerVideo: GroupCallBroadcastVideoOutput?
++        private var listenerLevels = GroupCallBroadcastLevels()
++        private let listenerNetworkType = MetaDisposable()
++        private var usesLegacyUnifiedBroadcast = false
++        private var engineMode: ConnectionMode = .none
++#endif
++
+         let joinPayload = Promise<(String, UInt32)>()
+         let networkState = ValuePromise<NetworkState>(NetworkState(isConnected: false, isTransitioningFromBroadcastToRtc: false, isBroadcast: false), ignoreRepeated: true)
+         let isMuted = ValuePromise<Bool>(true, ignoreRepeated: true)
+@@ -520,7 +628,8 @@ public final class OngoingGroupCallContext {
+             audioIsActiveByDefault: Bool,
+             isStream: Bool,
+             sharedAudioDevice: OngoingCallContext.AudioDevice?,
+-            encryptionContext: OngoingGroupCallEncryptionContext?
++            encryptionContext: OngoingGroupCallEncryptionContext?,
++            broadcastPlayer: Bool
+         ) {
+             self.queue = queue
+             
+@@ -791,12 +900,18 @@ public final class OngoingGroupCallContext {
+                     guard let strongSelf = self else {
+                         return
+                     }
++#if os(macOS)
++                    if let listenerSession = strongSelf.listenerSession, !strongSelf.usesLegacyUnifiedBroadcast {
++                        listenerSession.setRtcConnected(state.isConnected)
++                        return
++                    }
++#endif
+                     strongSelf.networkState.set(NetworkState(isConnected: state.isConnected, isTransitioningFromBroadcastToRtc: state.isTransitioningFromBroadcastToRtc, isBroadcast: state.isBroadcast))
+                 }
+             }
+             
+             let audioLevels = self.audioLevels
+-            audioLevelsUpdatedImpl = { levels in
++            audioLevelsUpdatedImpl = { [weak self] levels in
+                 var mappedLevels: [(AudioLevelKey, Float, Bool)] = []
+                 var i = 0
+                 while i < levels.count {
+@@ -811,6 +926,12 @@ public final class OngoingGroupCallContext {
+                     i += 3
+                 }
+                 queue.async {
++#if os(macOS)
++                    if let self, self.listenerSession != nil {
++                        audioLevels.putNext(self.listenerLevels.merged(into: mappedLevels))
++                        return
++                    }
++#endif
+                     audioLevels.putNext(mappedLevels)
+                 }
+             }
+@@ -838,6 +959,26 @@ public final class OngoingGroupCallContext {
+                 }
+             })
+             
++#if os(macOS)
++            if broadcastPlayer && videoContentType == .generic && !isConference {
++                let output = GroupCallBroadcastVideoOutput()
++                let platform = GroupCallBroadcastPlatform(queue: queue, audioCore: self.context.broadcastAudioCore, fetcher: {
++                    broadcastPartsSource.with { $0 }.map { GroupCallBroadcastFetcher(source: $0) }
++                }, videoOutput: output, rejoinNeeded: rejoinNeeded)
++                let session = BroadcastListenerSession(platform: platform)
++                let networkState = self.networkState
++                session.networkStateUpdated = { state in
++                    networkState.set(NetworkState(isConnected: state.isConnected, isTransitioningFromBroadcastToRtc: state.isTransitioningFromBroadcastToRtc, isBroadcast: state.mode == .broadcast))
++                }
++                session.levelsUpdated = { [weak self] levels in
++                    self?.listenerLevels.add(levels)
++                }
++                self.listenerSession = session
++                self.listenerPlatform = platform
++                self.listenerVideo = output
++            }
++#endif
++
+             if sharedAudioDevice == nil {
+                 self.audioSessionActiveDisposable.set((audioSessionActive
+                 |> deliverOn(queue)).start(next: { [weak self] isActive in
+@@ -854,6 +995,11 @@ public final class OngoingGroupCallContext {
+         
+         deinit {
+             self.audioSessionActiveDisposable.dispose()
++#if os(macOS)
++            self.listenerNetworkType.dispose()
++            self.listenerSession?.stop()
++            self.listenerPlatform?.close()
++#endif
+         }
+         
+         func setJoinResponse(payload: String) {
+@@ -864,6 +1010,13 @@ public final class OngoingGroupCallContext {
+             if let audioStreamData = audioStreamData {
+                 let broadcastPartsSource = NetworkBroadcastPartSource(queue: self.queue, engine: audioStreamData.engine, callId: audioStreamData.callId, accessHash: audioStreamData.accessHash, isExternalStream: audioStreamData.isExternalStream)
+                 let _ = self.broadcastPartsSource.swap(broadcastPartsSource)
++#if os(macOS)
++                if let session = self.listenerSession {
++                    self.listenerNetworkType.set((audioStreamData.engine.account.networkType |> deliverOn(self.queue)).start(next: { [weak session] networkType in
++                        session?.setNetworkClass(broadcastNetworkClass(networkType))
++                    }))
++                }
++#endif
+             }
+         }
+         
+@@ -885,6 +1038,9 @@ public final class OngoingGroupCallContext {
+         
+         func setVolume(ssrc: UInt32, volume: Double) {
+             self.context.setVolumeForSsrc(ssrc, volume: volume)
++#if os(macOS)
++            self.listenerSession?.setVolume(ssrc: ssrc, volume: Float(volume))
++#endif
+         }
+ 
+         func setRequestedVideoChannels(_ channels: [VideoChannel]) {
+@@ -923,10 +1079,30 @@ public final class OngoingGroupCallContext {
+                         maxQuality: mappedMaxQuality
+                     )
+                 })
++#if os(macOS)
++                self.listenerSession?.setRequestedVideoChannels(channels.map {
++                    BroadcastVideoChannelRequest(endpointId: $0.endpointId, minQuality: Self.broadcastQuality($0.minQuality), maxQuality: Self.broadcastQuality($0.maxQuality))
++                })
++#endif
+             }
+         }
+-        
++
++#if os(macOS)
++        private static func broadcastQuality(_ quality: VideoChannel.Quality) -> BroadcastQuality {
++            switch quality {
++            case .thumbnail: return .thumbnail
++            case .medium: return .medium
++            case .full: return .full
++            }
++        }
++#endif
++
+         func stop(account: Account?, reportCallId: CallId?, debugLog: Promise<String?>) {
++#if os(macOS)
++            self.listenerNetworkType.dispose()
++            self.listenerSession?.stop()
++            self.listenerPlatform?.close()
++#endif
+             self.context.stop()
+             
+             let logPath = self.logPath
+@@ -965,6 +1141,31 @@ public final class OngoingGroupCallContext {
+         }
+         
+         func setConnectionMode(_ connectionMode: ConnectionMode, keepBroadcastConnectedIfWasEnabled: Bool, isUnifiedBroadcast: Bool) {
++#if os(macOS)
++            if isUnifiedBroadcast {
++                self.usesLegacyUnifiedBroadcast = true
++                self.listenerSession?.setMode(.none, keepBroadcastIfWasEnabled: false)
++            } else if self.usesLegacyUnifiedBroadcast {
++                self.usesLegacyUnifiedBroadcast = false
++            }
++            if let session = self.listenerSession, !isUnifiedBroadcast {
++                let mode: BroadcastHandoffCoordinator.Mode
++                switch connectionMode {
++                case .none: mode = .none
++                case .rtc: mode = .rtc
++                case .broadcast: mode = .broadcast
++                }
++                session.setMode(mode, keepBroadcastIfWasEnabled: keepBroadcastConnectedIfWasEnabled)
++                if connectionMode == .broadcast {
++                    if self.engineMode != .none {
++                        self.context.setConnectionMode(.none, keepBroadcastConnectedIfWasEnabled: false, isUnifiedBroadcast: false)
++                        self.engineMode = .none
++                    }
++                    return
++                }
++                self.engineMode = connectionMode
++            }
++#endif
+             let mappedConnectionMode: OngoingCallConnectionMode
+             switch connectionMode {
+             case .none:
+@@ -976,7 +1177,12 @@ public final class OngoingGroupCallContext {
+             }
+             self.context.setConnectionMode(mappedConnectionMode, keepBroadcastConnectedIfWasEnabled: keepBroadcastConnectedIfWasEnabled, isUnifiedBroadcast: isUnifiedBroadcast)
+             
+-            if (mappedConnectionMode != .rtc) {
++#if os(macOS)
++            let emitsJoinPayload = mappedConnectionMode == .none
++#else
++            let emitsJoinPayload = mappedConnectionMode != .rtc
++#endif
++            if emitsJoinPayload {
+                 self.joinPayload.set(.never())
+                 
+                 let queue = self.queue
+@@ -1083,6 +1289,23 @@ public final class OngoingGroupCallContext {
+ 
+ 
+         func video(endpointId: String) -> Signal<OngoingGroupCallContext.VideoFrameData, NoError> {
++            let engineVideo = self.engineVideo(endpointId: endpointId)
++#if os(macOS)
++            if let listenerVideo = self.listenerVideo {
++                return Signal { subscriber in
++                    let rtc = engineVideo.start(next: subscriber.putNext)
++                    let broadcast = listenerVideo.video(endpointId: endpointId).start(next: subscriber.putNext)
++                    return ActionDisposable {
++                        rtc.dispose()
++                        broadcast.dispose()
++                    }
++                }
++            }
++#endif
++            return engineVideo
++        }
++
++        private func engineVideo(endpointId: String) -> Signal<OngoingGroupCallContext.VideoFrameData, NoError> {
+             let queue = self.queue
+             return Signal { [weak self] subscriber in
+                 let disposable = MetaDisposable()
+@@ -1225,10 +1448,10 @@ public final class OngoingGroupCallContext {
+         }
+     }
+     
+-    public init(inputDeviceId: String = "", outputDeviceId: String = "", audioSessionActive: Signal<Bool, NoError>, video: OngoingCallVideoCapturer?, requestMediaChannelDescriptions: @escaping (Set<UInt32>, @escaping ([MediaChannelDescription]) -> Void) -> Disposable, rejoinNeeded: @escaping () -> Void, outgoingAudioBitrateKbit: Int32?, videoContentType: VideoContentType, enableNoiseSuppression: Bool, disableAudioInput: Bool, enableSystemMute: Bool, useReferenceImpl: Bool, prioritizeVP8: Bool, logPath: String, onMutedSpeechActivityDetected: @escaping (Bool) -> Void, isConference: Bool, audioIsActiveByDefault: Bool, isStream: Bool, sharedAudioDevice: OngoingCallContext.AudioDevice?, encryptionContext: OngoingGroupCallEncryptionContext?) {
++    public init(inputDeviceId: String = "", outputDeviceId: String = "", audioSessionActive: Signal<Bool, NoError>, video: OngoingCallVideoCapturer?, requestMediaChannelDescriptions: @escaping (Set<UInt32>, @escaping ([MediaChannelDescription]) -> Void) -> Disposable, rejoinNeeded: @escaping () -> Void, outgoingAudioBitrateKbit: Int32?, videoContentType: VideoContentType, enableNoiseSuppression: Bool, disableAudioInput: Bool, enableSystemMute: Bool, useReferenceImpl: Bool, prioritizeVP8: Bool, logPath: String, onMutedSpeechActivityDetected: @escaping (Bool) -> Void, isConference: Bool, audioIsActiveByDefault: Bool, isStream: Bool, sharedAudioDevice: OngoingCallContext.AudioDevice?, encryptionContext: OngoingGroupCallEncryptionContext?, broadcastPlayer: Bool = false) {
+         let queue = self.queue
+         self.impl = QueueLocalObject(queue: queue, generate: {
+-            return Impl(queue: queue, inputDeviceId: inputDeviceId, outputDeviceId: outputDeviceId, audioSessionActive: audioSessionActive, video: video, requestMediaChannelDescriptions: requestMediaChannelDescriptions, rejoinNeeded: rejoinNeeded, outgoingAudioBitrateKbit: outgoingAudioBitrateKbit, videoContentType: videoContentType, enableNoiseSuppression: enableNoiseSuppression, disableAudioInput: disableAudioInput, enableSystemMute: enableSystemMute, useReferenceImpl: useReferenceImpl, prioritizeVP8: prioritizeVP8, logPath: logPath, onMutedSpeechActivityDetected: onMutedSpeechActivityDetected, isConference: isConference, audioIsActiveByDefault: audioIsActiveByDefault, isStream: isStream, sharedAudioDevice: sharedAudioDevice, encryptionContext: encryptionContext)
++            return Impl(queue: queue, inputDeviceId: inputDeviceId, outputDeviceId: outputDeviceId, audioSessionActive: audioSessionActive, video: video, requestMediaChannelDescriptions: requestMediaChannelDescriptions, rejoinNeeded: rejoinNeeded, outgoingAudioBitrateKbit: outgoingAudioBitrateKbit, videoContentType: videoContentType, enableNoiseSuppression: enableNoiseSuppression, disableAudioInput: disableAudioInput, enableSystemMute: enableSystemMute, useReferenceImpl: useReferenceImpl, prioritizeVP8: prioritizeVP8, logPath: logPath, onMutedSpeechActivityDetected: onMutedSpeechActivityDetected, isConference: isConference, audioIsActiveByDefault: audioIsActiveByDefault, isStream: isStream, sharedAudioDevice: sharedAudioDevice, encryptionContext: encryptionContext, broadcastPlayer: broadcastPlayer)
+         })
+     }
+     
+diff --git a/submodules/WalletContext/Sources/WalletWidgetCalls.swift b/submodules/WalletContext/Sources/WalletWidgetCalls.swift
+index b4139519..0e05c492 100644
+--- a/submodules/WalletContext/Sources/WalletWidgetCalls.swift
++++ b/submodules/WalletContext/Sources/WalletWidgetCalls.swift
+@@ -355,6 +355,7 @@ func widgetSignDataRequest(json: String, walletAddress: String) throws -> Wallet
+ 
+ /// TON Connect's `signData` result (`SignDataResponse`): the signature in standard base64, the wallet's raw address, the
+ /// timestamp, the domain and the payload as the widget sent it.
++@available(macOS 10.15, *)
+ func widgetSignDataResponse(signature: Data, rawAddress: String, timestamp: UInt64, domain: String, payloadJson: String) -> String {
+     let payload: Any = (try? JSONSerialization.jsonObject(with: Data(payloadJson.utf8))) ?? payloadJson
+     let object: [String: Any] = [
+@@ -386,6 +387,7 @@ private func widgetJSONObject(_ json: String) -> [String: Any]? {
+ }
+ 
+ /// Base64 or base64url, padded or not, as standard padded base64; `previewFailed` otherwise.
++@available(macOS 10.15, *)
+ private func widgetBase64(_ value: String) throws -> String {
+     var normalized = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+     while normalized.hasSuffix("=") {

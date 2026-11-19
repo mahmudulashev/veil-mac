@@ -1,0 +1,7 @@
+#include "common.xcconfig"
+DSA_PEM_FILE = dsa_pub_prod.pem
+SFEED_URL = https:$(SIMPLE_SLASH)/127.0.0.1/veil-no-updates.xml
+SOURCE = STABLE
+
+TYPE = -D'STABLE'
+OTHER_SWIFT_FLAGS = $(TYPE)

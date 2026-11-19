@@ -1,0 +1,65 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "srgb:0.22745,0.22745,0.25098,1.00000",
+      "srgb:0.04314,0.04314,0.05098,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "blend-mode" : "normal",
+      "blur-material" : 0.5,
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "linear-gradient" : [
+              "srgb:1.00000,1.00000,1.00000,1.00000",
+              "srgb:0.82745,0.82745,0.85490,1.00000"
+            ]
+          },
+          "glass" : true,
+          "image-name" : "WingLeft.svg",
+          "name" : "WingLeft"
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "linear-gradient" : [
+              "srgb:0.89412,0.89412,0.91765,1.00000",
+              "srgb:0.52549,0.52549,0.56078,1.00000"
+            ]
+          },
+          "glass" : true,
+          "image-name" : "WingRight.svg",
+          "name" : "WingRight"
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "linear-gradient" : [
+              "srgb:0.43137,0.43137,0.46275,1.00000",
+              "srgb:0.17255,0.17255,0.19216,1.00000"
+            ]
+          },
+          "glass" : true,
+          "image-name" : "Keel.svg",
+          "name" : "Keel"
+        }
+      ],
+      "lighting" : "combined",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.6
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 1
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}
