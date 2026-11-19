@@ -444,7 +444,7 @@ open class LiquidGlassView: View {
             // ghosts, an in-flight tint animation can be picked up by the merged
             // SDF surface and bleed onto adjacent ghosts for a frame or two.
             
-            glass.tintColor = customTint ?? palette.background.withAlphaComponent(tintAlpha)
+            glass.tintColor = customTint ?? defaultTint(palette)
 
         } else if let visual = effectView as? NSVisualEffectView {
             if #available(macOS 10.14, *) {
@@ -461,6 +461,13 @@ open class LiquidGlassView: View {
             solid.layer?.backgroundColor = palette.background.cgColor
             applyTintOverlay(host: solid)
         }
+    }
+
+    private func defaultTint(_ palette: ColorPalette) -> NSColor {
+        if palette.isDark || tintAlpha <= 0 {
+            return palette.background.withAlphaComponent(tintAlpha)
+        }
+        return NSColor.white.withAlphaComponent(min(0.85, tintAlpha + 0.4))
     }
 
     /// Compose a solid-coloured overlay on top of the fallback blur surface

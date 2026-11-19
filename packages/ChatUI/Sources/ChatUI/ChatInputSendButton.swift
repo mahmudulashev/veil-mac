@@ -266,7 +266,7 @@ public final class ChatInputSendButton: View {
 
         let stopIcon = generateImage(NSMakeSize(14, 14), contextGenerator: { size, context in
             context.clear(size.bounds)
-            context.setFillColor(theme.colors.text.cgColor)
+            context.setFillColor(NSColor.white.cgColor)
             context.addPath(CGPath(roundedRect: size.bounds, cornerWidth: 3, cornerHeight: 3, transform: nil))
             context.fillPath()
         })!
@@ -516,7 +516,7 @@ public final class ChatInputSendButton: View {
         voice.appTooltip = FastSettings.recordingState == .voice ? strings().appTooltipVoiceRecord : strings().appTooltipVideoRecord
         voice.removeImage(for: .Normal)
         voiceIcon.isHidden = false
-        voiceIcon.update(state: FastSettings.recordingState, color: theme.colors.text, animated: animated)
+        voiceIcon.update(state: FastSettings.recordingState, color: .white, animated: animated)
     }
 
     public func prepare(with chatInteraction: ChatInteraction) {

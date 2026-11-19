@@ -499,7 +499,9 @@ open class TelegramPresentationTheme : PresentationTheme {
             return value
         } else {
             let chatServiceItemColor: NSColor
-            if bubbled {
+            if bubbled, !colors.isDark {
+                chatServiceItemColor = NSColor.white.withAlphaComponent(0.82)
+            } else if bubbled {
                 switch backgroundMode {
                 case let .background(image, _, colors, _, _):
                     if let colors = colors, colors.count > 0 {
@@ -543,7 +545,9 @@ open class TelegramPresentationTheme : PresentationTheme {
             return value
         } else {
             let chatServiceItemTextColor: NSColor
-            if bubbled {
+            if bubbled, !colors.isDark {
+                chatServiceItemTextColor = colors.text
+            } else if bubbled {
                 switch backgroundMode {
                 case .background:
                     chatServiceItemTextColor = NSColor(rgb: 0xffffff)
