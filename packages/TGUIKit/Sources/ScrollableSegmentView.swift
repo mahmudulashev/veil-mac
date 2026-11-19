@@ -578,6 +578,11 @@ public class ScrollableSegmentView: View {
         }
         return insetBetween
     }
+
+    private var edgeInset: CGFloat {
+        let insetBetween = self.insetBetween
+        return insetBetween > 0 ? insetBetween : 12
+    }
     
     public override func layout() {
         super.layout()
@@ -592,7 +597,7 @@ public class ScrollableSegmentView: View {
         let insetBetween: CGFloat = self.insetBetween
 
         
-        var x: CGFloat = insetBetween
+        var x: CGFloat = edgeInset
         
         for item in self.items {
             if let view = item.view {
@@ -600,7 +605,7 @@ public class ScrollableSegmentView: View {
                 x += view.size.width + insetBetween
             }
         }
-        documentView.frame = CGRect(origin: .zero, size: NSMakeSize(max(x, frame.width), frame.height))
+        documentView.frame = CGRect(origin: .zero, size: NSMakeSize(max(x + edgeInset - insetBetween, frame.width), frame.height))
         selectorView.frame = selectorFrame
     }
     
@@ -733,7 +738,7 @@ public class ScrollableSegmentView: View {
             var bestIndex: Int = items.count - 1
             let insetBetween: CGFloat = self.insetBetween
 
-            var x: CGFloat = insetBetween
+            var x: CGFloat = edgeInset
             for (i, item) in self.items.enumerated() {
                 if let view = item.view {
                     x += view.frame.width + insetBetween
@@ -747,7 +752,7 @@ public class ScrollableSegmentView: View {
             bestIndex = min(max(resortRange.location, bestIndex), resortRange.max - 1)
             if bestIndex != self.bestIndex {
                 self.bestIndex = bestIndex
-                x = insetBetween
+                x = edgeInset
                 for (i, item) in self.items.enumerated() {
                     if let view = item.view {
                         if i == bestIndex, bestIndex <= data.item.index {
@@ -781,7 +786,7 @@ public class ScrollableSegmentView: View {
         let insetBetween: CGFloat = self.insetBetween
         
        
-        x += insetBetween
+        x += edgeInset
         for (i, item) in items.enumerated() {
             if let view = item.view {
                 view._change(pos: NSMakePoint(x, 0), animated: animated, completion: { [weak self] completed in
@@ -793,7 +798,7 @@ public class ScrollableSegmentView: View {
             }
         }
         
-        documentView.change(size: NSMakeSize(max(x, frame.width), frame.height), animated: animated)
+        documentView.change(size: NSMakeSize(max(x + edgeInset - insetBetween, frame.width), frame.height), animated: animated)
         selectorView.change(pos: selectorFrame.origin, animated: animated)
     }
     
