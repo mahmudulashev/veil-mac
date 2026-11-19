@@ -1055,7 +1055,7 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
             }
             
             if case .filter = filterData.filter, mapped.isEmpty {} else {
-                if !update.list.hasLater, state.appear != .short {
+                if false, !update.list.hasLater, state.appear != .short {
                     let hideStatus: ItemHideStatus = hiddenItems.archive
                     for (i, group) in update.list.groupItems.reversed().enumerated() {
                         mapped.append(.group(i, group, animateGroupNextTransition.swap(nil) == group.id, hideStatus, state.controllerAppear, state.appear == .short, storyState))

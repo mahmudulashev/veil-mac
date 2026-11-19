@@ -32,17 +32,21 @@ private let _id_keep_edits = InputDataIdentifier("_id_ghost_keep_edits")
 private let _id_read_on_reply = InputDataIdentifier("_id_ghost_read_on_reply")
 
 public func ghostModeSettingsIcon(_ base: CGImage) -> CGImage {
+    return settingsSymbolIcon(base, symbol: "eye.slash.fill", color: NSColor(red: 0.55, green: 0.42, blue: 0.98, alpha: 1))
+}
+
+public func settingsSymbolIcon(_ base: CGImage, symbol symbolName: String, color: NSColor) -> CGImage {
     let size = NSMakeSize(CGFloat(base.width) / System.backingScale, CGFloat(base.height) / System.backingScale)
     return generateImage(size, contextGenerator: { size, ctx in
         ctx.clear(CGRect(origin: .zero, size: size))
         let rect = CGRect(origin: .zero, size: size)
         let path = CGPath(roundedRect: rect, cornerWidth: size.width * 0.24, cornerHeight: size.height * 0.24, transform: nil)
         ctx.addPath(path)
-        ctx.setFillColor(NSColor(red: 0.55, green: 0.42, blue: 0.98, alpha: 1).cgColor)
+        ctx.setFillColor(color.cgColor)
         ctx.fillPath()
         let config = NSImage.SymbolConfiguration(pointSize: size.height * 0.52, weight: .semibold)
             .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
-        if let symbol = NSImage(systemSymbolName: "eye.slash.fill", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+        if let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
             let symbolSize = symbol.size
             let origin = CGPoint(x: (size.width - symbolSize.width) / 2, y: (size.height - symbolSize.height) / 2)
             NSGraphicsContext.saveGraphicsState()

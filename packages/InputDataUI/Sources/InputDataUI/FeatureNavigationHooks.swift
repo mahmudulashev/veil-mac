@@ -277,6 +277,7 @@ public struct FeatureNavigationHooks {
     public var makePreviewSenderWithContext: ([URL], AnyObject, Bool, NSAttributedString?, TelegramPresentationTheme?, AnalyticsContext) -> ModalViewController? = { _, _, _, _, _, _ in nil }
     public var makeArchiveSettingsController: (any AccountContextProtocol, GlobalPrivacySettings?, @escaping (GlobalPrivacySettings) -> Void) -> ViewController? = { _, _, _ in nil }
     public var updateAccountBirthday: (Date, any AccountContextProtocol) -> Void = { _, _ in }
+    public var openArchivedChats: (any AccountContextProtocol) -> Void = { _ in }
 
     public init() {}
 

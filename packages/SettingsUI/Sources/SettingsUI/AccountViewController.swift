@@ -155,6 +155,7 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
     case appearance(index: Int, viewType: GeneralViewType)
     case privacy(index: Int, viewType: GeneralViewType, AccountPrivacySettings?, TwoStepVeriticationAccessConfiguration?, WebSessionsContextState)
     case ghost(index: Int, viewType: GeneralViewType, enabled: Bool)
+    case archived(index: Int, viewType: GeneralViewType)
     case dataAndStorage(index: Int, viewType: GeneralViewType)
     case activeSessions(index: Int, viewType: GeneralViewType, activeSessions: Int)
     case passport(index: Int, viewType: GeneralViewType, peer: PeerEquatable)
@@ -204,6 +205,8 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
             return .index(12)
         case .ghost:
             return .index(998)
+        case .archived:
+            return .index(999)
         case .language:
             return .index(13)
         case .stickers:
@@ -276,6 +279,8 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
         case let .privacy(index, _, _, _, _):
             return index
         case let .ghost(index, _, _):
+            return index
+        case let .archived(index, _):
             return index
         case let .dataAndStorage(index, _):
             return index
@@ -440,6 +445,11 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
             let icon = ghostModeSettingsIcon(theme.icons.settingsSecurity)
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Ghost rejimi", icon: icon, activeIcon: icon, type: .nextContext(enabled ? "Yoqilgan" : "O'chiq"), viewType: viewType, action: {
                 arguments.presentController(GhostModeController(context: arguments.context), true)
+            }, inset:NSEdgeInsets(left: 12, right: 12), customTheme: .initialize(theme, background: .clear))
+        case let .archived(_, viewType):
+            let icon = settingsSymbolIcon(theme.icons.settingsSecurity, symbol: "archivebox.fill", color: NSColor(srgbRed: 0.39, green: 0.45, blue: 0.55, alpha: 1))
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Arxivlangan chatlar", icon: icon, activeIcon: icon, type: .next, viewType: viewType, action: {
+                FeatureNavigationHooks.shared.openArchivedChats(arguments.context)
             }, inset:NSEdgeInsets(left: 12, right: 12), customTheme: .initialize(theme, background: .clear))
         case let .dataAndStorage(_, viewType):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().accountSettingsDataAndStorage, icon: theme.icons.settingsStorage, activeIcon: theme.icons.settingsStorageActive, type: .next, viewType: viewType, action: {
@@ -668,6 +678,8 @@ private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerVi
     entries.append(.privacy(index: index, viewType: .singleItem, privacySettings, twoStepConfiguration, webSessions))
     index += 1
     entries.append(.ghost(index: index, viewType: .singleItem, enabled: GhostMode.settings.enabled))
+    index += 1
+    entries.append(.archived(index: index, viewType: .singleItem))
     index += 1
     entries.append(.dataAndStorage(index: index, viewType: .singleItem))
     index += 1

@@ -36,6 +36,7 @@ import ChannelAdminUI
 import TelegramCallsCore
 import PreviewSenderUI
 import ChatUI
+import ChatListUI
 
 private extension PremiumBoardingSource {
     var logSource: PremiumLogEventsSource {
@@ -363,6 +364,12 @@ func installFeatureNavigationHooks() {
     }
     hooks.makeArchiveSettingsController = { context, privacy, update in
         return ArchiveSettingsController(context: context, privacy: privacy, update: update)
+    }
+    hooks.openArchivedChats = { context in
+        let context = context as! AccountContext
+        let main = context.bindings.mainViewController
+        main.showChatList()
+        main.effectiveNavigation.push(ChatListController(context, modal: false, mode: .folder(.archive)))
     }
     hooks.updateAccountBirthday = { date, context in
         editAccountUpdateBirthday(date, context: context)
