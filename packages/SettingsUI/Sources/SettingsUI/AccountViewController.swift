@@ -155,7 +155,7 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
     case appearance(index: Int, viewType: GeneralViewType)
     case privacy(index: Int, viewType: GeneralViewType, AccountPrivacySettings?, TwoStepVeriticationAccessConfiguration?, WebSessionsContextState)
     case ghost(index: Int, viewType: GeneralViewType, enabled: Bool)
-    case archived(index: Int, viewType: GeneralViewType)
+    case archived(index: Int, viewType: GeneralViewType, unread: Int)
     case dataAndStorage(index: Int, viewType: GeneralViewType)
     case activeSessions(index: Int, viewType: GeneralViewType, activeSessions: Int)
     case passport(index: Int, viewType: GeneralViewType, peer: PeerEquatable)
@@ -280,7 +280,7 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
             return index
         case let .ghost(index, _, _):
             return index
-        case let .archived(index, _):
+        case let .archived(index, _, _):
             return index
         case let .dataAndStorage(index, _):
             return index
@@ -446,9 +446,9 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Ghost rejimi", icon: icon, activeIcon: icon, type: .nextContext(enabled ? "Yoqilgan" : "O'chiq"), viewType: viewType, action: {
                 arguments.presentController(GhostModeController(context: arguments.context), true)
             }, inset:NSEdgeInsets(left: 12, right: 12), customTheme: .initialize(theme, background: .clear))
-        case let .archived(_, viewType):
+        case let .archived(_, viewType, unread):
             let icon = settingsSymbolIcon(theme.icons.settingsSecurity, symbol: "archivebox.fill", color: NSColor(srgbRed: 0.39, green: 0.45, blue: 0.55, alpha: 1))
-            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Arxivlangan chatlar", icon: icon, activeIcon: icon, type: .next, viewType: viewType, action: {
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Arxivlangan chatlar", icon: icon, activeIcon: icon, type: unread > 0 ? .badge("\(unread)", theme.colors.accent) : .next, viewType: viewType, action: {
                 FeatureNavigationHooks.shared.openArchivedChats(arguments.context)
             }, inset:NSEdgeInsets(left: 12, right: 12), customTheme: .initialize(theme, background: .clear))
         case let .dataAndStorage(_, viewType):
@@ -542,7 +542,7 @@ private func settingsMoneyIcon() -> CGImage? {
     return image.precomposed(flipVertical: true)
 }
 
-private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerView, context: Context, accounts: [AccountWithInfo], language: TelegramLocalization, privacySettings: AccountPrivacySettings?, webSessions: WebSessionsContextState, proxySettings: (ProxySettings, ConnectionStatus), passportVisible: Bool, appUpdateState: Any?, hasFilters: Bool, sessionsCount: Int, unAuthStatus: NotificationAuthorizationStatus, has2fa: Bool, twoStepConfiguration: TwoStepVeriticationAccessConfiguration?, storyStats: EngineStorySubscriptions?, attachMenuBots: [AttachMenuBot], stars: StarsContext.State?, ton: StarsContext.State?, walletBalance: Int64?) -> [AccountInfoEntry<Context>] {
+private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerView, context: Context, accounts: [AccountWithInfo], language: TelegramLocalization, privacySettings: AccountPrivacySettings?, webSessions: WebSessionsContextState, proxySettings: (ProxySettings, ConnectionStatus), passportVisible: Bool, appUpdateState: Any?, hasFilters: Bool, sessionsCount: Int, unAuthStatus: NotificationAuthorizationStatus, has2fa: Bool, twoStepConfiguration: TwoStepVeriticationAccessConfiguration?, storyStats: EngineStorySubscriptions?, attachMenuBots: [AttachMenuBot], stars: StarsContext.State?, ton: StarsContext.State?, walletBalance: Int64?, archiveUnread: Int) -> [AccountInfoEntry<Context>] {
     var entries:[AccountInfoEntry<Context>] = []
     
     var index:Int = 0
@@ -679,7 +679,7 @@ private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerVi
     index += 1
     entries.append(.ghost(index: index, viewType: .singleItem, enabled: GhostMode.settings.enabled))
     index += 1
-    entries.append(.archived(index: index, viewType: .singleItem))
+    entries.append(.archived(index: index, viewType: .singleItem, unread: archiveUnread))
     index += 1
     entries.append(.dataAndStorage(index: index, viewType: .singleItem))
     index += 1
@@ -1222,10 +1222,28 @@ open class AccountViewController<Context: AccountContextProtocol> : TelegramGene
             walletBalance = .single(nil)
         }
 
-        let walletBalanceAndGhost = combineLatest(walletBalance, ghostModeSettingsSignal()) |> map { balance, _ in balance }
+        let archiveUnreadKey: PostboxViewKey = .unreadCounts(items: [.totalInGroup(Namespaces.PeerGroup.archive)])
+        let archiveUnread: Signal<Int, NoError> = context.account.postbox.combinedView(keys: [archiveUnreadKey])
+        |> map { view -> Int in
+            guard let counts = view.views[archiveUnreadKey] as? UnreadMessageCountsView else {
+                return 0
+            }
+            var total: Int32 = 0
+            for entry in counts.entries {
+                if case let .totalInGroup(_, state) = entry {
+                    for (_, counters) in state.absoluteCounters {
+                        total += counters.chatCount
+                    }
+                }
+            }
+            return Int(total)
+        }
+        |> distinctUntilChanged
+
+        let walletBalanceAndGhost = combineLatest(walletBalance, ghostModeSettingsSignal(), archiveUnread) |> map { balance, _, archive in (balance, archive) }
 
         let apply = combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(context.account.peerId), context.sharedContext.activeAccountsWithInfo, appearanceSignal, settings.get(), appUpdateState, hasFilters.get(), sessionsCount, SettingsHooks.shared.authorizationStatus(context), twoStep, storyStats, acceptBots.get(), context.starsContext.state, context.tonContext.state, walletBalanceAndGhost) |> map { peerView, accounts, appearance, settings, appUpdateState, hasFilters, sessionsCount, unAuthStatus, twoStepConfiguration, storyStats, attachMenuBots, stars, ton, walletBalance -> TableUpdateTransition in
-            let entries = accountInfoEntries(peerView: peerView, context: context, accounts: accounts.accounts, language: appearance.language, privacySettings: settings.0, webSessions: settings.1, proxySettings: settings.2, passportVisible: settings.3.0, appUpdateState: appUpdateState, hasFilters: hasFilters, sessionsCount: sessionsCount, unAuthStatus: unAuthStatus, has2fa: settings.3.1, twoStepConfiguration: twoStepConfiguration, storyStats: storyStats, attachMenuBots: attachMenuBots, stars: stars, ton: ton, walletBalance: walletBalance).map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}
+            let entries = accountInfoEntries(peerView: peerView, context: context, accounts: accounts.accounts, language: appearance.language, privacySettings: settings.0, webSessions: settings.1, proxySettings: settings.2, passportVisible: settings.3.0, appUpdateState: appUpdateState, hasFilters: hasFilters, sessionsCount: sessionsCount, unAuthStatus: unAuthStatus, has2fa: settings.3.1, twoStepConfiguration: twoStepConfiguration, storyStats: storyStats, attachMenuBots: attachMenuBots, stars: stars, ton: ton, walletBalance: walletBalance.0, archiveUnread: walletBalance.1).map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}
             var size = atomicSize.modify {$0}
             size.width = max(size.width, 280)
             return prepareEntries(left: previous.swap(entries), right: entries, arguments: arguments, initialSize: size)
