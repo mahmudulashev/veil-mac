@@ -38,14 +38,14 @@ struct SwitchGeometry {
     }
 
     var track: CGRect {
-        return CGRect(x: bounds.midX - 22 * scale, y: bounds.midY - 10 * scale, width: 44 * scale, height: 20 * scale)
+        return CGRect(x: bounds.midX - 20 * scale, y: bounds.midY - 12 * scale, width: 40 * scale, height: 24 * scale)
     }
 
-    var travel: CGFloat { 14 * scale }
+    var travel: CGFloat { 16 * scale }
 
     func thumb(position: CGFloat, lifted: Bool) -> CGRect {
-        let size = CGSize(width: (lifted ? 40 : 26) * scale, height: (lifted ? 24 : 16) * scale)
-        let center = CGPoint(x: track.minX + 15 * scale + travel * position, y: track.midY)
+        let size = CGSize(width: (lifted ? 24 : 20) * scale, height: 20 * scale)
+        let center = CGPoint(x: track.minX + 12 * scale + travel * position, y: track.midY)
         return CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height)
     }
 }
@@ -189,9 +189,9 @@ public class SwitchView: Control {
         thumbLayer.zPosition = 1
         thumbLayer.backgroundColor = NSColor.white.cgColor
         thumbLayer.shadowColor = NSColor.black.cgColor
-        thumbLayer.shadowOpacity = 0.12
-        thumbLayer.shadowRadius = 0.5
-        thumbLayer.shadowOffset = CGSize(width: 0, height: -0.5)
+        thumbLayer.shadowOpacity = 0.2
+        thumbLayer.shadowRadius = 2
+        thumbLayer.shadowOffset = CGSize(width: 0, height: -1)
         thumbView.layer?.addSublayer(thumbLayer)
         set(handler: { [weak self] _ in
             guard let self, !self.sendingPointerClick else { return }

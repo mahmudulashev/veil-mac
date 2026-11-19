@@ -1434,7 +1434,7 @@ index 04945389..adffa96a 100644
                  let signal = strongSelf.account.network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeerId, maxId: messageIndex.id.id))
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/Stories.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/Stories.swift
-index e74f2074..e904303f 100644
+index e74f2074..c1bb7c0e 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/Stories.swift
 +++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/Stories.swift
 @@ -2123,6 +2123,10 @@ func _internal_markStoryAsSeen(account: Account, peerId: PeerId, id: Int32, asPi
@@ -1448,6 +1448,17 @@ index e74f2074..e904303f 100644
              return account.network.request(Api.functions.stories.incrementStoryViews(peer: inputPeer, id: [id]))
              |> `catch` { _ -> Signal<Api.Bool, NoError> in
                  return .single(.boolFalse)
+@@ -2139,7 +2143,9 @@ func _internal_markStoryAsSeen(account: Account, peerId: PeerId, id: Int32, asPi
+             
+             #if DEBUG && false
+             #else
+-            _internal_addSynchronizeViewStoriesOperation(peerId: peerId, storyId: id, transaction: transaction)
++            if !GhostMode.flags.hideStoryViews {
++                _internal_addSynchronizeViewStoriesOperation(peerId: peerId, storyId: id, transaction: transaction)
++            }
+             #endif
+             
+             return transaction.getPeer(peerId).flatMap(apiInputUser)
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
 index 21020ed0..52723ff4 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
