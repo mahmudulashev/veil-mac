@@ -2684,7 +2684,7 @@ public class ChatRowItem: TableRowItem {
                 }
                 
                 if message.veilDeletedDate != nil {
-                    attr.insert(.initialize(string: "o'chirilgan · ", color: theme.colors.redUI, font: dateFont), at: 0)
+                    attr.insert(.initialize(string: "deleted · ", color: theme.colors.redUI, font: dateFont), at: 0)
                 }
                 if !message.veilEditHistory.isEmpty {
                     attr.insert(.initialize(string: "✎\(message.veilEditHistory.count) ", color: dateColor, font: dateFont), at: 0)

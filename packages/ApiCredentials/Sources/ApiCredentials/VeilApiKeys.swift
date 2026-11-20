@@ -54,14 +54,14 @@ public enum VeilApiKeys {
         let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
         let hash = hash.trimmingCharacters(in: .whitespacesAndNewlines)
         if id.isEmpty || hash.isEmpty {
-            return "Ikkala maydonni ham to'ldiring"
+            return "Fill in both fields"
         }
         guard let value = Int32(id), value > 0 else {
-            return "api_id faqat raqamlardan iborat bo'lishi kerak"
+            return "api_id must contain only digits"
         }
         let hex = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
         if hash.count != 32 || hash.unicodeScalars.contains(where: { !hex.contains($0) }) {
-            return "api_hash 32 ta belgidan iborat bo'lishi kerak"
+            return "api_hash must be 32 characters long"
         }
         return nil
     }
@@ -166,8 +166,8 @@ private final class VeilFieldView: NSView {
 
 private final class VeilWelcomeWindowController: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     private let window: NSWindow
-    private let idField = VeilFieldView(placeholder: "api_id  —  masalan 1234567", secure: false)
-    private let hashField = VeilFieldView(placeholder: "api_hash  —  32 ta belgi", secure: true)
+    private let idField = VeilFieldView(placeholder: "api_id  —  e.g. 1234567", secure: false)
+    private let hashField = VeilFieldView(placeholder: "api_hash  —  32 characters", secure: true)
     private let errorLabel = NSTextField(labelWithString: "")
     private var saved = false
 
@@ -248,12 +248,12 @@ private final class VeilWelcomeWindowController: NSObject, NSWindowDelegate, NST
         content.addSubview(icon)
         y += 104 + 22
 
-        let title = self.label("Veil'ga xush kelibsiz", size: 26, weight: .bold, color: .white)
+        let title = self.label("Welcome to Veil", size: 26, weight: .bold, color: .white)
         title.frame = NSMakeRect(inset, y, width - inset * 2, 34)
         content.addSubview(title)
         y += 34 + 8
 
-        let subtitle = self.label("Telegram'ning barcha imkoniyatlari, ko'rinmas rejim bilan. Boshlash uchun shaxsiy API kalitingizni kiriting.", size: 13.5, weight: .regular, color: NSColor(white: 1, alpha: 0.6))
+        let subtitle = self.label("All of Telegram, with an invisible mode. Enter your personal API keys to get started.", size: 13.5, weight: .regular, color: NSColor(white: 1, alpha: 0.6))
         subtitle.frame = NSMakeRect(inset, y, width - inset * 2, 40)
         content.addSubview(subtitle)
         y += 40 + 24
@@ -270,9 +270,9 @@ private final class VeilWelcomeWindowController: NSObject, NSWindowDelegate, NST
         content.addSubview(card)
 
         let steps = [
-            "my.telegram.org/apps saytiga raqamingiz bilan kiring",
-            "\"Create application\" bosib, ilova yarating",
-            "Berilgan api_id va api_hash ni pastga kiriting"
+            "Sign in to my.telegram.org/apps with your phone number",
+            "Click \"Create application\" to create an app",
+            "Enter the api_id and api_hash you get below"
         ]
         var stepY: CGFloat = 16
         for (i, step) in steps.enumerated() {
@@ -312,7 +312,7 @@ private final class VeilWelcomeWindowController: NSObject, NSWindowDelegate, NST
         content.addSubview(self.errorLabel)
         y += 16 + 12
 
-        let save = VeilCapsuleButton(title: "Davom etish", fill: NSColor(white: 0.97, alpha: 1), titleColor: .black, font: .systemFont(ofSize: 15, weight: .semibold))
+        let save = VeilCapsuleButton(title: "Continue", fill: NSColor(white: 0.97, alpha: 1), titleColor: .black, font: .systemFont(ofSize: 15, weight: .semibold))
         save.frame = NSMakeRect(inset, y, width - inset * 2, 48)
         save.target = self
         save.action = #selector(self.saveAction)
@@ -320,14 +320,14 @@ private final class VeilWelcomeWindowController: NSObject, NSWindowDelegate, NST
         content.addSubview(save)
         y += 48 + 12
 
-        let open = VeilCapsuleButton(title: "my.telegram.org ni ochish", fill: NSColor(white: 1, alpha: 0.08), titleColor: .white, font: .systemFont(ofSize: 14, weight: .medium))
+        let open = VeilCapsuleButton(title: "Open my.telegram.org", fill: NSColor(white: 1, alpha: 0.08), titleColor: .white, font: .systemFont(ofSize: 14, weight: .medium))
         open.frame = NSMakeRect(inset, y, width - inset * 2, 42)
         open.target = self
         open.action = #selector(self.openAction)
         content.addSubview(open)
         y += 42 + 18
 
-        let footer = self.label("🔒  Kalitlar faqat shu Mac'ning Keychain'ida saqlanadi", size: 11.5, weight: .regular, color: NSColor(white: 1, alpha: 0.4))
+        let footer = self.label("🔒  Keys are stored only in this Mac's Keychain", size: 11.5, weight: .regular, color: NSColor(white: 1, alpha: 0.4))
         footer.frame = NSMakeRect(inset, y, width - inset * 2, 16)
         content.addSubview(footer)
 

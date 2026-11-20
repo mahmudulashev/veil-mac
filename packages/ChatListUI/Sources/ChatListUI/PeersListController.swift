@@ -1093,8 +1093,8 @@ public class PeerListContainerView : Control {
             button.set(image: image, for: .Hover)
         }
         button.layer?.backgroundColor = enabled ? theme.colors.accent.withAlphaComponent(0.18).cgColor : NSColor.clear.cgColor
-        button.toolTip = enabled ? "Ghost rejimi yoqilgan (⌘⇧G)" : "Ghost rejimi o'chiq (⌘⇧G)"
-        button.setAccessibilityLabel(enabled ? "Ghost rejimi: yoqilgan" : "Ghost rejimi: o'chiq")
+        button.toolTip = enabled ? "Ghost Mode is on (⌘⇧G)" : "Ghost Mode is off (⌘⇧G)"
+        button.setAccessibilityLabel(enabled ? "Ghost Mode: on" : "Ghost Mode: off")
     }
 
     

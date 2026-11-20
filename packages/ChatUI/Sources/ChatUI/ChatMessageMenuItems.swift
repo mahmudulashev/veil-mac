@@ -1207,7 +1207,7 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         let veilHistory = data.message.veilEditHistory
         if !veilHistory.isEmpty {
             let currentText = data.message.text
-            secondBlock.append(ContextMenuItem("Tahrir tarixi (\(veilHistory.count))", handler: {
+            secondBlock.append(ContextMenuItem("Edit History (\(veilHistory.count))", handler: {
                 let formatter = DateFormatter()
                 formatter.dateFormat = "dd.MM HH:mm"
                 var lines: [String] = []
@@ -1216,7 +1216,7 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
                     lines.append("\(date)\n\(entry.text)")
                 }
                 lines.append("Hozirgi\n\(currentText)")
-                alert(for: context.window, header: "Tahrir tarixi", info: lines.joined(separator: "\n\n"))
+                alert(for: context.window, header: "Edit History", info: lines.joined(separator: "\n\n"))
             }, itemImage: MenuAnimation.menu_edit.value))
         }
 

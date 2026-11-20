@@ -443,12 +443,13 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
             }, inset:NSEdgeInsets(left: 12, right: 12), customTheme: .initialize(theme, background: .clear))
         case let .ghost(_, viewType, enabled):
             let icon = ghostModeSettingsIcon(theme.icons.settingsSecurity)
-            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Ghost rejimi", icon: icon, activeIcon: icon, type: .nextContext(enabled ? "Yoqilgan" : "O'chiq"), viewType: viewType, action: {
+            let activeIcon = ghostModeSettingsIcon(theme.icons.settingsSecurity, active: true)
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Ghost Mode", icon: icon, activeIcon: activeIcon, type: .nextContext(enabled ? "On" : "Off"), viewType: viewType, action: {
                 arguments.presentController(GhostModeController(context: arguments.context), true)
             }, inset:NSEdgeInsets(left: 12, right: 12), customTheme: .initialize(theme, background: .clear))
         case let .archived(_, viewType, unread):
             let icon = settingsSymbolIcon(theme.icons.settingsSecurity, symbol: "archivebox.fill", color: NSColor(srgbRed: 0.39, green: 0.45, blue: 0.55, alpha: 1))
-            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Arxivlangan chatlar", icon: icon, activeIcon: icon, type: unread > 0 ? .badge("\(unread)", theme.colors.accent) : .next, viewType: viewType, action: {
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: "Archived Chats", icon: icon, activeIcon: icon, type: unread > 0 ? .badge("\(unread)", theme.colors.accent) : .next, viewType: viewType, action: {
                 FeatureNavigationHooks.shared.openArchivedChats(arguments.context)
             }, inset:NSEdgeInsets(left: 12, right: 12), customTheme: .initialize(theme, background: .clear))
         case let .dataAndStorage(_, viewType):
@@ -1312,6 +1313,10 @@ open class AccountViewController<Context: AccountContextProtocol> : TelegramGene
                 }
             } else if let controller = navigation.controller as? InputDataController {
                 switch true {
+                case controller.identifier == "veil_ghost":
+                    if let item = tableView.item(stableId: AnyHashable(AccountInfoEntryId.index(998))) {
+                        _ = tableView.select(item: item)
+                    }
                 case controller.identifier == "proxy":
                     if let item = tableView.item(stableId: AnyHashable(AccountInfoEntryId.index(8))) {
                         _ = tableView.select(item: item)

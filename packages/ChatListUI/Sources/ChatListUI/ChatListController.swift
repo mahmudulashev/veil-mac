@@ -726,15 +726,6 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
         
         let data = f(stateValue.with { $0.filterData })
         
-        if !context.isPremium {
-            if let index = data.tabs.firstIndex(of: data.filter) {
-                if index > context.premiumLimits.dialog_filters_limit_default {
-                    FeatureNavigationHooks.shared.showPremiumLimit(context, .folders)
-                    return
-                }
-            }
-        }
-        
         var changedFolder = false
         
         updateState { previous in

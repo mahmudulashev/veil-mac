@@ -1891,7 +1891,7 @@ private final class VeilGhostMenu: NSObject {
             }
             menuItem.title = menuItem.title.replacingOccurrences(of: "Telegram", with: "Veil")
         }
-        let item = NSMenuItem(title: "Ghost rejimi", action: #selector(toggle), keyEquivalent: "g")
+        let item = NSMenuItem(title: "Ghost Mode", action: #selector(toggle), keyEquivalent: "g")
         item.keyEquivalentModifierMask = [.command, .shift]
         item.target = self
         let index = min(1, appMenu.numberOfItems)
@@ -1916,7 +1916,7 @@ private final class VeilGhostMenu: NSObject {
 
     func dockMenu() -> NSMenu {
         let menu = NSMenu()
-        let item = NSMenuItem(title: GhostMode.settings.enabled ? "Ghost rejimini o'chirish" : "Ghost rejimini yoqish", action: #selector(toggle), keyEquivalent: "")
+        let item = NSMenuItem(title: GhostMode.settings.enabled ? "Turn Off Ghost Mode" : "Turn On Ghost Mode", action: #selector(toggle), keyEquivalent: "")
         item.target = self
         menu.addItem(item)
         return menu

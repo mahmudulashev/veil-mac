@@ -75,8 +75,8 @@ final class VeilGhostPillView: Control {
         textView.update(layout)
         textView.setFrameSize(layout.layoutSize)
 
-        toolTip = enabled ? "Ghost yoqilgan, o'chirish uchun bosing (⌘⇧G)" : "Ghost o'chiq, yoqish uchun bosing (⌘⇧G)"
-        setAccessibilityLabel(enabled ? "Ghost rejimi: yoqilgan" : "Ghost rejimi: o'chiq")
+        toolTip = enabled ? "Ghost is on, click to turn off (⌘⇧G)" : "Ghost is off, click to turn on (⌘⇧G)"
+        setAccessibilityLabel(enabled ? "Ghost Mode: on" : "Ghost Mode: off")
         needsLayout = true
     }
 

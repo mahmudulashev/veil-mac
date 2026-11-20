@@ -20,7 +20,7 @@ final class GhostHeroRowItem: GeneralRowItem {
     }
 
     override var accessibilityLabel: String? {
-        return ghostEnabled ? "Ghost rejimi yoqilgan" : "Ghost rejimi o'chiq"
+        return ghostEnabled ? "Ghost Mode is on" : "Ghost Mode is off"
     }
 }
 
@@ -139,7 +139,7 @@ private final class GhostHeroRowView: GeneralContainableRowView {
         dotView.layer?.shadowOffset = .zero
         dotView.layer?.shadowOpacity = on ? 1 : 0
 
-        let label = NSAttributedString(string: on ? "GHOST · FAOL" : "GHOST · O'CHIQ", attributes: [
+        let label = NSAttributedString(string: on ? "GHOST · ACTIVE" : "GHOST · OFF", attributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: on ? glow : theme.colors.grayText,
             .kern: 1.2
@@ -150,16 +150,16 @@ private final class GhostHeroRowView: GeneralContainableRowView {
 
         let textWidth = max(100, item.blockWidth - GhostHeroRowView.padding * 2 - 96)
 
-        let titleLayout = TextViewLayout(.initialize(string: on ? "Siz ko'rinmaysiz" : "Siz hammaga ko'rinasiz", color: primary, font: NSFont.systemFont(ofSize: 26, weight: .bold)), maximumNumberOfLines: 2)
+        let titleLayout = TextViewLayout(.initialize(string: on ? "You're invisible" : "Everyone can see you", color: primary, font: NSFont.systemFont(ofSize: 26, weight: .bold)), maximumNumberOfLines: 2)
         titleLayout.measure(width: textWidth)
         titleView.update(titleLayout)
 
-        let subtitle = on ? "\(item.activeCount) ta himoya ishlayapti · faqat shu Mac'da" : "Yoqing: o'qish, onlayn, yozish va storislar yashiriladi"
+        let subtitle = on ? "\(item.activeCount) protections active · this Mac only" : "Turn on to hide reads, online status, typing and story views"
         let subtitleLayout = TextViewLayout(.initialize(string: subtitle, color: secondary, font: .normal(13)), maximumNumberOfLines: 2)
         subtitleLayout.measure(width: textWidth)
         subtitleView.update(subtitleLayout)
 
-        let buttonLayout = TextViewLayout(.initialize(string: on ? "O'chirish" : "Ghost'ni yoqish", color: on ? ink : .white, font: .medium(13)))
+        let buttonLayout = TextViewLayout(.initialize(string: on ? "Turn Off" : "Turn On Ghost", color: on ? ink : .white, font: .medium(13)))
         buttonLayout.measure(width: .greatestFiniteMagnitude)
         buttonText.update(buttonLayout)
         button.backgroundColor = on ? .white : accent

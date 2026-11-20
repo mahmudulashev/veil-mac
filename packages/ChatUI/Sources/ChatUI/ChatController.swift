@@ -11031,6 +11031,14 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                         animation = .menu_delete
                     }
 
+                    if !peer.isChannel, !peer.isSecretChat {
+                        let statsPeerName = mainPeer.compactDisplayTitle
+                        let statsIsGroup = peer.isGroup || peer.isSupergroup
+                        items.append(ContextMenuItem("Chat Stats", handler: {
+                            context.bindings.rootNavigation().push(VeilChatStatsController(context: context, peerId: peerId, peerName: statsPeerName, isGroup: statsIsGroup))
+                        }, itemImage: MenuAnimation.menu_statistics.value))
+                    }
+
                     if ChatNavigationHooks.shared.canExportChat(peer, peerView.cachedData) {
                         items.append(ContextMenuItem(ChatNavigationHooks.shared.chatExportMenuTitle(), handler: {
                             ChatNavigationHooks.shared.showChatExport(context, mainPeer)

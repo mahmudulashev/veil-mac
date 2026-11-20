@@ -636,6 +636,165 @@ index 00000000..acd37758
 +        }
 +    }).start()
 +}
+diff --git a/submodules/TelegramCore/Sources/Ghost/VeilLocalPins.swift b/submodules/TelegramCore/Sources/Ghost/VeilLocalPins.swift
+new file mode 100644
+index 00000000..292382e2
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/Ghost/VeilLocalPins.swift
+@@ -0,0 +1,153 @@
++import Foundation
++import Postbox
++
++public enum VeilLocalPins {
++    private static let defaultsKey = "veil.localPins"
++    private static let lock = NSLock()
++    private static var storage: [String: [Int64]] = {
++        if let data = UserDefaults.standard.data(forKey: defaultsKey), let value = try? JSONDecoder().decode([String: [Int64]].self, from: data) {
++            return value
++        }
++        return [:]
++    }()
++
++    private static func key(_ accountPeerId: PeerId, _ groupId: PeerGroupId) -> String {
++        return "\(accountPeerId.toInt64())_\(groupId.rawValue)"
++    }
++
++    private static func persist() {
++        if let data = try? JSONEncoder().encode(storage) {
++            UserDefaults.standard.set(data, forKey: defaultsKey)
++        }
++    }
++
++    public static func peerIds(accountPeerId: PeerId, groupId: PeerGroupId) -> [PeerId] {
++        lock.lock()
++        defer { lock.unlock() }
++        return (storage[key(accountPeerId, groupId)] ?? []).map(PeerId.init)
++    }
++
++    static func set(_ peerIds: [PeerId], accountPeerId: PeerId, groupId: PeerGroupId) {
++        lock.lock()
++        defer { lock.unlock() }
++        let k = key(accountPeerId, groupId)
++        if peerIds.isEmpty {
++            storage.removeValue(forKey: k)
++        } else {
++            storage[k] = peerIds.map { $0.toInt64() }
++        }
++        persist()
++    }
++
++    public static func contains(_ peerId: PeerId, accountPeerId: PeerId, groupId: PeerGroupId) -> Bool {
++        return peerIds(accountPeerId: accountPeerId, groupId: groupId).contains(peerId)
++    }
++
++    static func withoutLocal(_ itemIds: [PinnedItemId], accountPeerId: PeerId, groupId: PeerGroupId) -> [PinnedItemId] {
++        let local = Set(peerIds(accountPeerId: accountPeerId, groupId: groupId))
++        if local.isEmpty {
++            return itemIds
++        }
++        return itemIds.filter { item in
++            switch item {
++            case let .peer(peerId):
++                return !local.contains(peerId)
++            }
++        }
++    }
++
++    static func promote(remote: [PinnedItemId], accountPeerId: PeerId, groupId: PeerGroupId) {
++        let local = peerIds(accountPeerId: accountPeerId, groupId: groupId)
++        if local.isEmpty {
++            return
++        }
++        let remotePeerIds = Set(remote.map { item -> PeerId in
++            switch item {
++            case let .peer(peerId):
++                return peerId
++            }
++        })
++        let updated = local.filter { !remotePeerIds.contains($0) }
++        if updated != local {
++            set(updated, accountPeerId: accountPeerId, groupId: groupId)
++        }
++    }
++
++    static func merged(_ serverItemIds: [PinnedItemId], current: [PinnedItemId], accountPeerId: PeerId, groupId: PeerGroupId) -> [PinnedItemId] {
++        let local = peerIds(accountPeerId: accountPeerId, groupId: groupId)
++        if local.isEmpty {
++            return serverItemIds
++        }
++        var result = serverItemIds.filter { item in
++            switch item {
++            case let .peer(peerId):
++                return !local.contains(peerId)
++            }
++        }
++        var placed = Set<PeerId>()
++        for (index, item) in current.enumerated() {
++            if case let .peer(peerId) = item, local.contains(peerId), !placed.contains(peerId) {
++                result.insert(item, at: min(index, result.count))
++                placed.insert(peerId)
++            }
++        }
++        var front = 0
++        for peerId in local where !placed.contains(peerId) {
++            result.insert(.peer(peerId), at: front)
++            front += 1
++        }
++        return result
++    }
++}
++
++extension Transaction {
++    func veilSetServerPinnedItemIds(groupId: PeerGroupId, itemIds: [PinnedItemId], accountPeerId: PeerId) {
++        VeilLocalPins.promote(remote: itemIds, accountPeerId: accountPeerId, groupId: groupId)
++        let current = self.getPinnedItemIds(groupId: groupId)
++        self.setPinnedItemIds(groupId: groupId, itemIds: VeilLocalPins.merged(itemIds, current: current, accountPeerId: accountPeerId, groupId: groupId))
++    }
++}
++
++public enum VeilLocalFolders {
++    private static let defaultsKey = "veil.localFolders"
++    private static let lock = NSLock()
++    private static var storage: [String: [Int32]] = {
++        if let data = UserDefaults.standard.data(forKey: defaultsKey), let value = try? JSONDecoder().decode([String: [Int32]].self, from: data) {
++            return value
++        }
++        return [:]
++    }()
++
++    public static func ids(accountPeerId: PeerId) -> Set<Int32> {
++        lock.lock()
++        defer { lock.unlock() }
++        return Set(storage["\(accountPeerId.toInt64())"] ?? [])
++    }
++
++    static func set(_ ids: Set<Int32>, accountPeerId: PeerId) {
++        lock.lock()
++        defer { lock.unlock() }
++        let k = "\(accountPeerId.toInt64())"
++        if ids.isEmpty {
++            storage.removeValue(forKey: k)
++        } else {
++            storage[k] = ids.sorted()
++        }
++        if let data = try? JSONEncoder().encode(storage) {
++            UserDefaults.standard.set(data, forKey: defaultsKey)
++        }
++    }
++
++    static func reinsert(into filters: [ChatListFilter], from current: [ChatListFilter], localIds: Set<Int32>) -> [ChatListFilter] {
++        if localIds.isEmpty {
++            return filters
++        }
++        var result = filters.filter { !localIds.contains($0.id) }
++        for (index, filter) in current.enumerated() where localIds.contains(filter.id) {
++            if !result.contains(where: { $0.id == filter.id }) {
++                result.insert(filter, at: min(index, result.count))
++            }
++        }
++        return result
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/Network/NetworkTelemetryReporter.swift b/submodules/TelegramCore/Sources/Network/NetworkTelemetryReporter.swift
 index 3d18d399..0889d866 100644
 --- a/submodules/TelegramCore/Sources/Network/NetworkTelemetryReporter.swift
@@ -724,6 +883,19 @@ index 3dc6c7d5..3a04f62e 100644
                              Logger.shared.log("HistoryValidation", "deleting thread message \(id) in \(id.peerId)")
                          }
                      }
+diff --git a/submodules/TelegramCore/Sources/State/Holes.swift b/submodules/TelegramCore/Sources/State/Holes.swift
+index 0c03828f..9cac223d 100644
+--- a/submodules/TelegramCore/Sources/State/Holes.swift
++++ b/submodules/TelegramCore/Sources/State/Holes.swift
+@@ -1665,7 +1665,7 @@ func fetchChatListHole(postbox: Postbox, network: Network, accountPeerId: PeerId
+             }
+             
+             if let replacePinnedItemIds = fetchedChats.pinnedItemIds {
+-                transaction.setPinnedItemIds(groupId: groupId, itemIds: replacePinnedItemIds.map(PinnedItemId.peer))
++                transaction.veilSetServerPinnedItemIds(groupId: groupId, itemIds: replacePinnedItemIds.map(PinnedItemId.peer), accountPeerId: accountPeerId)
+             }
+             
+             for (peerId, summary) in fetchedChats.mentionTagSummaries {
 diff --git a/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift b/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
 index 7256668b..dc275f45 100644
 --- a/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
@@ -818,6 +990,36 @@ index b5ede6a8..42b9011a 100644
      if peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup {
          return network.request(Api.functions.messages.readMessageContents(id: operation.messageIds.map { $0.id }))
          |> map(Optional.init)
+diff --git a/submodules/TelegramCore/Sources/State/ManagedSynchronizePinnedChatsOperations.swift b/submodules/TelegramCore/Sources/State/ManagedSynchronizePinnedChatsOperations.swift
+index 90b23e61..04f8e1c5 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedSynchronizePinnedChatsOperations.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedSynchronizePinnedChatsOperations.swift
+@@ -113,14 +113,14 @@ func managedSynchronizePinnedChatsOperations(postbox: Postbox, network: Network,
+ }
+ 
+ private func synchronizePinnedChats(transaction: Transaction, postbox: Postbox, network: Network, accountPeerId: PeerId, stateManager: AccountStateManager, groupId: PeerGroupId, operation: SynchronizePinnedChatsOperation) -> Signal<Void, NoError> {
+-    let initialRemoteItemIds = operation.previousItemIds
++    let initialRemoteItemIds = VeilLocalPins.withoutLocal(operation.previousItemIds, accountPeerId: accountPeerId, groupId: groupId)
+     let initialRemoteItemIdsWithoutSecretChats = initialRemoteItemIds.filter { item in
+         switch item {
+             case let .peer(peerId):
+                 return peerId.namespace != Namespaces.Peer.SecretChat
+         }
+     }
+-    let localItemIds = transaction.getPinnedItemIds(groupId: groupId)
++    let localItemIds = VeilLocalPins.withoutLocal(transaction.getPinnedItemIds(groupId: groupId), accountPeerId: accountPeerId, groupId: groupId)
+     let localItemIdsWithoutSecretChats = localItemIds.filter { item in
+         switch item {
+             case let .peer(peerId):
+@@ -225,7 +225,7 @@ private func synchronizePinnedChats(transaction: Transaction, postbox: Postbox,
+             return postbox.transaction { transaction -> Signal<Void, NoError> in
+                 updatePeers(transaction: transaction, accountPeerId: accountPeerId, peers: parsedPeers)
+                 
+-                transaction.setPinnedItemIds(groupId: groupId, itemIds: resultingItemIds)
++                transaction.veilSetServerPinnedItemIds(groupId: groupId, itemIds: resultingItemIds, accountPeerId: accountPeerId)
+                 
+                 transaction.updateCurrentPeerNotificationSettings(notificationSettings)
+                 
 diff --git a/submodules/TelegramCore/Sources/State/ManagedSynchronizeViewStoriesOperations.swift b/submodules/TelegramCore/Sources/State/ManagedSynchronizeViewStoriesOperations.swift
 index e38c0f96..a17bd176 100644
 --- a/submodules/TelegramCore/Sources/State/ManagedSynchronizeViewStoriesOperations.swift
@@ -1043,6 +1245,19 @@ index 79fcb6e0..b2eb791e 100644
                      }
                  })
                  
+diff --git a/submodules/TelegramCore/Sources/State/ResetState.swift b/submodules/TelegramCore/Sources/State/ResetState.swift
+index deda3e04..71f25d25 100644
+--- a/submodules/TelegramCore/Sources/State/ResetState.swift
++++ b/submodules/TelegramCore/Sources/State/ResetState.swift
+@@ -190,7 +190,7 @@ func _internal_resetAccountState(postbox: Postbox, network: Network, accountPeer
+             }
+             
+             if let replacePinnedItemIds = fetchedChats.pinnedItemIds {
+-                transaction.setPinnedItemIds(groupId: .root, itemIds: replacePinnedItemIds.map(PinnedItemId.peer))
++                transaction.veilSetServerPinnedItemIds(groupId: .root, itemIds: replacePinnedItemIds.map(PinnedItemId.peer), accountPeerId: accountPeerId)
+             }
+             
+             for (peerId, summary) in fetchedChats.mentionTagSummaries {
 diff --git a/submodules/TelegramCore/Sources/State/StoredMessageConfirmation.swift b/submodules/TelegramCore/Sources/State/StoredMessageConfirmation.swift
 index 49d68a37..ab2e8455 100644
 --- a/submodules/TelegramCore/Sources/State/StoredMessageConfirmation.swift
@@ -1055,6 +1270,22 @@ index 49d68a37..ab2e8455 100644
      var regularIds: [MessageId] = []
      var channelIds: [MessageId] = []
      for id in ids {
+diff --git a/submodules/TelegramCore/Sources/State/Sync/StateReplay+ChatList.swift b/submodules/TelegramCore/Sources/State/Sync/StateReplay+ChatList.swift
+index ec282062..e38788ad 100644
+--- a/submodules/TelegramCore/Sources/State/Sync/StateReplay+ChatList.swift
++++ b/submodules/TelegramCore/Sources/State/Sync/StateReplay+ChatList.swift
+@@ -57,9 +57,9 @@ extension ReplayContext {
+                         }
+                 }
+             case let .reorder(itemIds):
+-                let currentItemIds = transaction.getPinnedItemIds(groupId: groupId)
++                let currentItemIds = VeilLocalPins.withoutLocal(transaction.getPinnedItemIds(groupId: groupId), accountPeerId: accountPeerId, groupId: groupId)
+                 if Set(itemIds) == Set(currentItemIds) {
+-                    transaction.setPinnedItemIds(groupId: groupId, itemIds: itemIds)
++                    transaction.veilSetServerPinnedItemIds(groupId: groupId, itemIds: itemIds, accountPeerId: accountPeerId)
+                 } else {
+                     addSynchronizePinnedChatsOperation(transaction: transaction, groupId: groupId)
+                 }
 diff --git a/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift b/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
 index cf1ab15d..77a1b9ec 100644
 --- a/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
@@ -1480,6 +1711,135 @@ index 21020ed0..52723ff4 100644
          public func transcribeAudio(messageId: MessageId) -> Signal<EngineAudioTranscriptionResult, NoError> {
              return _internal_transcribeAudio(postbox: self.account.postbox, network: self.account.network, messageId: messageId)
          }
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatListFiltering.swift b/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatListFiltering.swift
+index f8aacb5a..fb6e9e37 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatListFiltering.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatListFiltering.swift
+@@ -1588,8 +1588,25 @@ private func synchronizeChatListFilters(transaction: Transaction, accountPeerId:
+     switch operation.content {
+     case .sync:
+         let settings = transaction.getPreferencesEntry(key: PreferencesKeys.chatListFilters)?.get(ChatListFiltersState.self) ?? ChatListFiltersState.default
+-        let localFilters = settings.filters
+-        let locallyKnownRemoteFilters = settings.remoteFilters ?? []
++        let isPremium = transaction.getPeer(accountPeerId)?.isPremium ?? false
++        let appConfiguration = transaction.getPreferencesEntry(key: PreferencesKeys.appConfiguration)?.get(AppConfiguration.self) ?? .defaultValue
++        let folderLimit = Int(UserLimitsConfiguration(appConfiguration: appConfiguration, isPremium: isPremium).maxFoldersCount)
++        let knownRemoteIds = Set((settings.remoteFilters ?? []).map { $0.id })
++        var veilLocalIds = VeilLocalFolders.ids(accountPeerId: accountPeerId).intersection(Set(settings.filters.map { $0.id }))
++        var serverBoundCount = 0
++        for filter in settings.filters {
++            guard case .filter = filter, !veilLocalIds.contains(filter.id) else {
++                continue
++            }
++            if serverBoundCount >= folderLimit, !knownRemoteIds.contains(filter.id) {
++                veilLocalIds.insert(filter.id)
++            } else {
++                serverBoundCount += 1
++            }
++        }
++        VeilLocalFolders.set(veilLocalIds, accountPeerId: accountPeerId)
++        let localFilters = settings.filters.filter { !veilLocalIds.contains($0.id) }
++        let locallyKnownRemoteFilters = (settings.remoteFilters ?? []).filter { !veilLocalIds.contains($0.id) }
+         let localDisplayTags = settings.displayTags
+         let locallyKnownRemoteDisplayTags = settings.remoteDisplayTags ?? false
+         
+@@ -1598,15 +1615,21 @@ private func synchronizeChatListFilters(transaction: Transaction, accountPeerId:
+             return .complete()
+         }
+         |> mapToSignal { remoteFilters, remoteTagsEnabled -> Signal<Never, NoError> in
++            let remoteIds = Set(remoteFilters.map { $0.id })
++            if !veilLocalIds.intersection(remoteIds).isEmpty {
++                veilLocalIds.subtract(remoteIds)
++                VeilLocalFolders.set(veilLocalIds, accountPeerId: accountPeerId)
++            }
+             if localFilters == locallyKnownRemoteFilters && localDisplayTags == locallyKnownRemoteDisplayTags {
+                 return postbox.transaction { transaction -> Void in
+                     let _ = updateChatListFiltersState(transaction: transaction, { state in
+                         var state = state
+                         let currentFilters = state.filters
+-                        state.filters = remoteFilters.map { remoteFilter in
++                        let remoteState = remoteFilters.map { remoteFilter in
+                             return remoteFilter.withLocalOnlyPeers(from: currentFilters.first(where: { $0.id == remoteFilter.id }))
+                         }
+-                        state.remoteFilters = state.filters
++                        state.filters = VeilLocalFolders.reinsert(into: remoteState, from: currentFilters, localIds: VeilLocalFolders.ids(accountPeerId: accountPeerId))
++                        state.remoteFilters = remoteState
+                         state.displayTags = remoteTagsEnabled
+                         state.remoteDisplayTags = state.displayTags
+                         return state
+@@ -1662,10 +1685,16 @@ private func synchronizeChatListFilters(transaction: Transaction, accountPeerId:
+                     updated = true
+                 }
+                 if updated {
++                    let isNewOnServer = !remoteIds.contains(filter.id)
+                     addSignals = addSignals
+                     |> then(
+                         _internal_requestUpdateChatListFilter(postbox: postbox, network: network, id: filter.id, filter: filter)
+                         |> `catch` { _ -> Signal<Never, NoError> in
++                            if isNewOnServer, case .filter = filter {
++                                var ids = VeilLocalFolders.ids(accountPeerId: accountPeerId)
++                                ids.insert(filter.id)
++                                VeilLocalFolders.set(ids, accountPeerId: accountPeerId)
++                            }
+                             return .complete()
+                         }
+                         |> ignoreValues
+@@ -1709,8 +1738,9 @@ private func synchronizeChatListFilters(transaction: Transaction, accountPeerId:
+                 postbox.transaction { transaction -> Void in
+                     let _ = updateChatListFiltersState(transaction: transaction, { state in
+                         var state = state
+-                        state.filters = mergedFilters
+-                        state.remoteFilters = state.filters
++                        let localIds = VeilLocalFolders.ids(accountPeerId: accountPeerId)
++                        state.filters = VeilLocalFolders.reinsert(into: mergedFilters, from: state.filters, localIds: localIds)
++                        state.remoteFilters = mergedFilters.filter { !localIds.contains($0.id) }
+                         state.remoteDisplayTags = state.displayTags
+                         return state
+                     })
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Peers/TogglePeerChatPinned.swift b/submodules/TelegramCore/Sources/TelegramEngine/Peers/TogglePeerChatPinned.swift
+index aa11e522..743ade84 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Peers/TogglePeerChatPinned.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Peers/TogglePeerChatPinned.swift
+@@ -22,6 +22,14 @@ func _internal_toggleItemPinned(postbox: Postbox, accountPeerId: PeerId, locatio
+         switch location {
+         case let .group(groupId):
+             var itemIds = transaction.getPinnedItemIds(groupId: groupId)
++            var localPeerIds = VeilLocalPins.peerIds(accountPeerId: accountPeerId, groupId: groupId)
++            if case let .peer(peerId) = itemId, let localIndex = localPeerIds.firstIndex(of: peerId) {
++                localPeerIds.remove(at: localIndex)
++                VeilLocalPins.set(localPeerIds, accountPeerId: accountPeerId, groupId: groupId)
++                itemIds.removeAll(where: { $0 == itemId })
++                transaction.setPinnedItemIds(groupId: groupId, itemIds: itemIds)
++                return .done
++            }
+             if itemIds.firstIndex(of: itemId) == nil {
+                 switch itemId {
+                 case let .peer(peerId):
+@@ -34,6 +42,9 @@ func _internal_toggleItemPinned(postbox: Postbox, accountPeerId: PeerId, locatio
+                 switch itemId {
+                     case let .peer(lhsPeerId):
+                         if case let .peer(rhsPeerId) = item {
++                            if localPeerIds.contains(rhsPeerId) {
++                                return false
++                            }
+                             return (lhsPeerId.namespace == Namespaces.Peer.SecretChat) == (rhsPeerId.namespace == Namespaces.Peer.SecretChat) && lhsPeerId != rhsPeerId
+                         } else {
+                             return false
+@@ -58,7 +69,13 @@ func _internal_toggleItemPinned(postbox: Postbox, accountPeerId: PeerId, locatio
+             
+             let count = sameKind.count + additionalCount
+             if count > limitCount, itemIds.firstIndex(of: itemId) == nil {
+-                return .limitExceeded(count: sameKind.count, limit: limitCount)
++                if case let .peer(peerId) = itemId {
++                    localPeerIds.insert(peerId, at: 0)
++                    VeilLocalPins.set(localPeerIds, accountPeerId: accountPeerId, groupId: groupId)
++                }
++                itemIds.insert(itemId, at: 0)
++                transaction.setPinnedItemIds(groupId: groupId, itemIds: itemIds)
++                return .done
+             } else {
+                 if let index = itemIds.firstIndex(of: itemId) {
+                     itemIds.remove(at: index)
 diff --git a/submodules/TelegramCore/Tests/AudioFileTranscriptionTests.swift b/submodules/TelegramCore/Tests/AudioFileTranscriptionTests.swift
 new file mode 100644
 index 00000000..ae1032d2
