@@ -3,8 +3,14 @@ import Security
 
 public enum VeilApiKeys {
     private static let service = "uz.veil.telegram.api"
+    private static let lock = NSLock()
+    private static var cached: (id: Int32, hash: String)?
 
-    private static func read(_ account: String) -> String? {
+    private static var fileURL: URL? {
+        return ApiEnvironment.legacyContainerURL?.appendingPathComponent("api-keys.plist")
+    }
+
+    private static func readKeychain(_ account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -19,20 +25,7 @@ public enum VeilApiKeys {
         return String(data: data, encoding: .utf8)
     }
 
-    private static func write(_ value: String, _ account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
-        var add = query
-        add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
-    }
-
-    public static func clear() {
+    private static func clearKeychain() {
         for account in ["api_id", "api_hash"] {
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
@@ -43,11 +36,67 @@ public enum VeilApiKeys {
         }
     }
 
-    public static var current: (id: Int32, hash: String)? {
-        guard let idString = read("api_id"), let id = Int32(idString), let hash = read("api_hash"), !hash.isEmpty else {
+    private static func readFile() -> (id: Int32, hash: String)? {
+        guard let url = fileURL, let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        guard let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            return nil
+        }
+        guard let id = (dict["api_id"] as? NSNumber)?.int32Value, id > 0, let hash = dict["api_hash"] as? String, !hash.isEmpty else {
             return nil
         }
         return (id, hash)
+    }
+
+    private static func writeFile(id: Int32, hash: String) -> Bool {
+        guard let url = fileURL else {
+            return false
+        }
+        let dict: [String: Any] = ["api_id": NSNumber(value: id), "api_hash": hash]
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0) else {
+            return false
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func load() -> (id: Int32, hash: String)? {
+        if let value = readFile() {
+            return value
+        }
+        guard let idString = readKeychain("api_id"), let id = Int32(idString), id > 0, let hash = readKeychain("api_hash"), !hash.isEmpty else {
+            return nil
+        }
+        if writeFile(id: id, hash: hash) {
+            clearKeychain()
+        }
+        return (id, hash)
+    }
+
+    public static func clear() {
+        lock.lock()
+        cached = nil
+        lock.unlock()
+        if let url = fileURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        clearKeychain()
+    }
+
+    public static var current: (id: Int32, hash: String)? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached {
+            return cached
+        }
+        cached = load()
+        return cached
     }
 
     static func validate(id: String, hash: String) -> String? {
@@ -67,8 +116,14 @@ public enum VeilApiKeys {
     }
 
     static func store(id: String, hash: String) {
-        write(id.trimmingCharacters(in: .whitespacesAndNewlines), "api_id")
-        write(hash.trimmingCharacters(in: .whitespacesAndNewlines), "api_hash")
+        guard let value = Int32(id.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return
+        }
+        let hash = hash.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = writeFile(id: value, hash: hash)
+        lock.lock()
+        cached = (value, hash)
+        lock.unlock()
     }
 
     public static func ensure() -> Bool {
@@ -327,7 +382,7 @@ private final class VeilWelcomeWindowController: NSObject, NSWindowDelegate, NST
         content.addSubview(open)
         y += 42 + 18
 
-        let footer = self.label("🔒  Keys are stored only in this Mac's Keychain", size: 11.5, weight: .regular, color: NSColor(white: 1, alpha: 0.4))
+        let footer = self.label("🔒  Keys are stored only on this Mac", size: 11.5, weight: .regular, color: NSColor(white: 1, alpha: 0.4))
         footer.frame = NSMakeRect(inset, y, width - inset * 2, 16)
         content.addSubview(footer)
 

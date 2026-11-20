@@ -71,7 +71,7 @@ Telegram requires every third-party client to use its own API credentials. On fi
 2. Click **Create application** and fill in any name.
 3. Paste the **api_id** and **api_hash** into Veil.
 
-The keys are stored only in your Mac's Keychain.
+The keys are stored only on your Mac and are never sent anywhere except to Telegram.
 
 ## Good to know
 - Telegram may still show you online for a few seconds right after you send a message.
