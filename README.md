@@ -1,83 +1,104 @@
 <div align="center">
-  <img src="Telegram-Mac/Assets.xcassets/AppIcon.appiconset/Logo_1024.png"
-      width="125" 
-      height="125">
-  
-  <h2 align="center">Telegram for macOS</h2>
+  <img src="images/veil-icon.png" width="128" height="128" alt="Veil icon">
+
+  <h1>Veil</h1>
+
+  <p><b>A native, privacy-first Telegram client for macOS.</b><br>
+  Read, listen and watch without leaving a trace.</p>
+
+  <p>
+    <a href="https://github.com/mahmudulashev/veil-mac/releases/latest"><img src="https://img.shields.io/github/v/release/mahmudulashev/veil-mac?label=download&color=111111" alt="Latest release"></a>
+    <img src="https://img.shields.io/badge/macOS-12%2B-111111" alt="macOS 12+">
+    <img src="https://img.shields.io/badge/Apple%20Silicon-native-111111" alt="Apple Silicon">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv2-111111" alt="GPLv2"></a>
+  </p>
 </div>
 
-![Telegram macOS screenshot](images/tg.png)
+---
 
-[**Telegram**](https://telegram.org) is a messaging app with a focus on speed and security. It’s superfast, simple, and free! This repo contains the official source code for [Telegram for macOS](https://macos.telegram.org/).
+Veil is a fork of the official [Telegram for macOS](https://github.com/overtake/TelegramSwift) app. It keeps everything
+Telegram does, adds a **Ghost Mode** and a set of client-side extras, and wraps it in a cleaner, lighter design.
+Everything Veil adds runs on your Mac only: no extra servers, no analytics.
 
-## Get it
+> Veil is an unofficial client and is not affiliated with Telegram.
 
-[![Download on the Mac App Store](images/mas_badge.png)](https://itunes.apple.com/us/app/telegram/id747648890?mt=12)
+## Features
 
-### Using `mas-cli`
+### Ghost Mode
+Turn it on with one click from the chat list pill or with <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>.
 
+| | What stays hidden |
+|---|---|
+| **Read receipts** | Messages you read don't get the double check |
+| **Online status** | You always appear offline |
+| **Typing** | "Typing…" and "recording voice…" are never sent |
+| **Listened & watched** | Opening voice and video messages stays hidden |
+| **Story views** | You don't appear in story viewer lists |
+| **Read on reply** | Optional: sending a message marks the earlier ones as read |
+
+### Message archive
+- **Deleted messages** stay in your chat history, marked as deleted, even after the other side removes them
+- **Edit history** keeps the text from before every edit, one click away in the message menu
+
+Both work even when Ghost Mode is off and are stored only on your Mac.
+
+### Beyond Telegram's limits
+- **Unlimited pins**: pin more chats than the server allows; the extra pins live on this Mac and survive syncs
+- **Unlimited folders**: folders over the server limit stay local-only and keep working
+- **Chat Stats**: per-chat activity by hour, reply times, busiest day, streaks, media and top emoji, computed locally
+- **Archive in Settings**: archived chats move out of the chat list, with their unread count on the Settings row
+
+### Design
+A light, airy interface with glass surfaces, pill tabs, round switches and a calmer chat screen.
+
+## Install
+
+1. Download `Veil.dmg` from the [latest release](https://github.com/mahmudulashev/veil-mac/releases/latest).
+2. Open it and drag **Veil** into **Applications**.
+3. Veil is not notarized by Apple, so the first launch needs one extra step:
+   right-click **Veil** in Applications, choose **Open**, then **Open** again.
+   On macOS 15 and newer, open **System Settings → Privacy & Security** and click **Open Anyway**.
+
+   If macOS says the app is damaged, run this once:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/Veil.app
+   ```
+
+### Your own API keys
+Telegram requires every third-party client to use its own API credentials. On first launch Veil asks for them:
+
+1. Sign in to [my.telegram.org/apps](https://my.telegram.org/apps) with your phone number.
+2. Click **Create application** and fill in any name.
+3. Paste the **api_id** and **api_hash** into Veil.
+
+The keys are stored only in your Mac's Keychain.
+
+## Good to know
+- Telegram may still show you online for a few seconds right after you send a message.
+- Ghost Mode, the message archive, local pins and local folders exist only on this Mac. Your phone and other devices
+  behave as usual.
+- Using an unofficial client is at your own risk. Veil only changes what your own app sends; it can't unlock anything
+  the server keeps locked.
+
+## Build from source
+
+Veil builds exactly like Telegram for macOS. Requirements, setup and troubleshooting are in [INSTALL.md](INSTALL.md).
+
+```sh
+git clone --recurse-submodules https://github.com/mahmudulashev/veil-mac.git
+cd veil-mac
+sh scripts/setup_build_env.sh --build
+open Telegram-Mac.xcworkspace
 ```
-mas install 747648890
-```
 
-### Manual download
-
-If you would like, you can [download the non-MAS version](https://telegram.org/dl/macos).
-
-You can also [download the beta version](https://telegram.org/dl/macos/beta) if you want to try the latest features and you are prepared for bugs and crashes. If you are running the beta, join the [beta testing chat on Telegram](https://t.me/macswift) to report bugs.
-
-## Contributors
-
-### Contributors on GitHub
-See [this repository’s contributors graph](https://github.com/macosswift/telegram/graphs/contributors).
-
-### Bugs and Suggestions
-You can report bug or suggestions feature for Telegram for macOS on [Telegram’s Bugs & Suggestions platform](https://bugs.telegram.org). Read [the platform tip](https://bugs.telegram.org/c/746) before creating first card.
-
-### Translations
-You can help translate Telegram for macOS on [Telegram’s translations platform](https://translations.telegram.org). Pick your language, then look for the macOS translation set.
-
-<!--### Third-party libraries-->
-<!--See [LIBRARIES](LIBRARIES.md).-->
-
-## Permissions
-Telegram strives to protect your privacy.  This app asks for as few permissions as possible:
-
-* **Microphone**: You can send voice messages and make audio calls with Telegram.
-* **Camera**: You can set your profile picture using your Mac’s iSight camera.
-* **Location**: You can send your location to friends.
-* **Outgoing network connections**: Telegram needs to connect to the internet to send your messages to your friends.
-* **Incoming network connections**: Telegram needs to accept incoming connections for peer-to-peer voice calls.
-* **User-selected files**: You can save files or images to your Mac.
-* **Downloads folder**: Telegram can automatically download files or images you receive.
-
-## Shortcuts
-With [Shortcuts](https://github.com/macosswift/telegram/wiki) you can learn how easy is navigate using your devices.
+Build the `Telegram` scheme. Veil's changes to the shared Telegram-iOS code live in
+[`scripts/telegram-ios-macos.patch`](scripts/telegram-ios-macos.patch) and are applied by
+`scripts/prepare-telegram-ios.sh`.
 
 ## License
-Telegram for macOS is licensed under the GNU Public License, version 2.0. See [LICENSE](LICENSE) for more information.
 
-## Forking
-You can fork this application and make something awesome! Make sure that your fork follows these five requirements:
+Veil is licensed under the GNU General Public License, version 2.0, like the Telegram for macOS source it is based on.
+See [LICENSE](LICENSE).
 
-1. **Do** [get your own API ID](https://core.telegram.org/api/obtaining_api_id).
-2. **Don’t** call your fork **Telegram** — or at least make sure your users understand that yours is unofficial.
-3. **Don’t** use our standard logo (white paper plane in a blue circle) for your fork.
-3. **Do** read and follow our [security guidelines](https://core.telegram.org/mtproto/security_guidelines) to make sure you take good care of your users’ data and protect their privacy.
-4. **Do** publish your code. The [GPL license](LICENSE) requires it!
-
-## How to Build
-
-Quick start (full details, requirements and troubleshooting are in [INSTALL.md](INSTALL.md)):
-
-1. Install Xcode 16 or newer, Homebrew and a Rust toolchain (rustup). On Xcode 27, apply the local changes in
-   [XCODE27.md](XCODE27.md) first: it supports macOS 12.0 and newer only, and the project targets 10.13.
-2. Clone with submodules:
-   ```
-   git clone --recurse-submodules https://github.com/macosswift/telegram.git
-   ```
-3. Prepare the machine and build the native libraries once:
-   ```
-   sh scripts/setup_build_env.sh --build
-   ```
-4. Open `Telegram-Mac.xcworkspace` in Xcode and build the `Telegram` scheme.
+Telegram is a trademark of Telegram FZ-LLC. Veil uses its own name, icon and API credentials, as the
+[Telegram API terms](https://core.telegram.org/api/terms) ask of forks.
